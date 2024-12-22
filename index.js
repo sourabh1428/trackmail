@@ -92,6 +92,7 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
         });
 
         // Record as sent
+      
         await db.collection("AlreadySent").insertOne({ email });
         console.log(`Email sent to ${email}`);
         return email;
