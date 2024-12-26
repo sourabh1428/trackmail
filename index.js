@@ -187,7 +187,7 @@ app.post('/send-email', async (req, res) => {
   }
 });
 
-app.post('/sourabh-send', async (req, res) => {
+app.get('/sourabh-send', async (req, res) => {
   try {
     const data = await sendBulkEmails(
       "sppathak1428@gmail.com", 
@@ -205,7 +205,7 @@ app.post('/sourabh-send', async (req, res) => {
   }
 });
 
-app.post('/khushi-send', async (req, res) => {
+app.get('/khushi-send', async (req, res) => {
   try {
     const data = await sendBulkEmails(
       "khushibanchhor21@gmail.com", 
