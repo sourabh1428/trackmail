@@ -137,6 +137,8 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
       Successful emails: ${successfulEmails}, 
       Failed emails: ${failedEmails}`);
 
+      return({"Success":successfulEmails,"failed":failedEmails})
+
   } catch (error) {
     console.error("Error during bulk email process:", error);
   } finally {
@@ -198,7 +200,7 @@ app.get('/sourabh-send', async (req, res) => {
     if(data) {
       console.log("All emails are sent successfully");
     }
-    res.status(200).json({ message: "Bulk email process initiated." });
+    res.status(200).json({ message: data });
   } catch(error) {
     console.error("Error in bulk email API:", error);
     res.status(500).json({ message: "Failed to initiate bulk email process.", error });
@@ -216,7 +218,7 @@ app.get('/khushi-send', async (req, res) => {
     if(data) {
       console.log("All emails are sent successfully");
     }
-    res.status(200).json({ message: "Bulk email process initiated." });
+    res.status(200).json({ message: data });
   } catch(error) {
     console.error("Error in bulk email API:", error);
     res.status(500).json({ message: "Failed to initiate bulk email process.", error });
