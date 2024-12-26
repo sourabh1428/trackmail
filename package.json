@@ -2,9 +2,9 @@
   "name": "emailer",
   "version": "1.0.0",
   "main": "index.js",
-  "build": "",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
+    "build": "npm install --save",
     "start": "nodemon index.js"
   },
   "author": "",
