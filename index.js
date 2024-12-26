@@ -213,7 +213,7 @@ app.get('/khushi-send', async (req, res) => {
       "khushibanchhor21@gmail.com", 
       "Application for SDE-1", 
       "bunch", 
-      {"bunchID":"test"}
+      {"bunchID":"linkedin_test"}
     );
     if(data) {
       console.log("All emails are sent successfully");
