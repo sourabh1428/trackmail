@@ -84,6 +84,12 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
     await client.connect();
     db = client.db("test_db");
     
+    // Ensure TTL Index is created (only needs to run once)
+    await db.collection("AlreadySent").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: 864000  } // Documents expire after 30 seconds
+    );
+
     if (recipientType !== "bunch") {
       console.log("Recipient type is not 'bunch'. Skipping email sending.");
       return;
@@ -101,8 +107,8 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
 
     const emailPromises = uniqueEmails.map(async (email) => {
       let alreadySent;
-      
-      if(email!=="sppathak1428@gmail.com" || email!=="khushibanchhor21@gmail.com") {
+      //
+      if (  email !== "sppathak1428@gmail.com" && email !== "khushibanchhor21@gmail.com") {
         alreadySent = await db.collection("AlreadySent").findOne({ email });
       }
       if (alreadySent) return null;
@@ -116,9 +122,12 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
           subject,
           html: trackedHtml,
         });
-      
-        if(email!=="sppathak1428@gmail.com" && email!=="khushibanchhor21@gmail.com") {
-          await db.collection("AlreadySent").insertOne({ email });
+//
+        if ( email !== "sppathak1428@gmail.com" && email !== "khushibanchhor21@gmail.com") {
+          await db.collection("AlreadySent").insertOne({
+            email,
+            createdAt: new Date() // Add timestamp for TTL
+          });
         }
         console.log(`Email sent to ${email}`);
         return email;
@@ -137,7 +146,7 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
       Successful emails: ${successfulEmails}, 
       Failed emails: ${failedEmails}`);
 
-      return({"Success":successfulEmails,"failed":failedEmails})
+    return { Success: successfulEmails, Failed: failedEmails };
 
   } catch (error) {
     console.error("Error during bulk email process:", error);
@@ -145,6 +154,7 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
     if (db) await client.close();
   }
 }
+
 
 app.post('/send-bulk-emails', async (req, res) => {
   const { from, subject, recipientType, recipientData } = req.body;
