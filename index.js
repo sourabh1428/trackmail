@@ -78,25 +78,41 @@ function createTransporter(fromEmail) {
 
 async function sendBulkEmails(from, subject, recipientType, recipientData) {
   console.log("Starting bulk email process...");
-  
+
   let db;
   try {
     await client.connect();
     db = client.db("test_db");
-    
-    // Ensure TTL Index is created (only needs to run once)
-    await db.collection("AlreadySent").createIndex(
-      { createdAt: 1 },
-      { expireAfterSeconds: 864000  } // Documents expire after 30 seconds
-    );
+
+    // Ensure TTL Index is created or updated
+    const indexName = "createdAt_1";
+    const indexes = await db.collection("AlreadySent").indexes();
+    const existingIndex = indexes.find(index => index.name === indexName);
+
+    if (existingIndex) {
+      if (existingIndex.expireAfterSeconds !== 864000) {
+        console.log(`Updating existing index: ${indexName}`);
+        await db.collection("AlreadySent").dropIndex(indexName);
+        await db.collection("AlreadySent").createIndex(
+          { createdAt: 1 },
+          { name: indexName, expireAfterSeconds: 864000 }
+        );
+      }
+    } else {
+      console.log(`Creating new index: ${indexName}`);
+      await db.collection("AlreadySent").createIndex(
+        { createdAt: 1 },
+        { name: indexName, expireAfterSeconds: 864000 }
+      );
+    }
 
     if (recipientType !== "bunch") {
       console.log("Recipient type is not 'bunch'. Skipping email sending.");
       return;
     }
 
-    const users = await db.collection("Users").find({ 
-      bunchID: recipientData.bunchID 
+    const users = await db.collection("Users").find({
+      bunchID: recipientData.bunchID,
     }).toArray();
 
     const uniqueEmails = [...new Set(users.filter(user => user.email).map(user => user.email))];
@@ -106,12 +122,16 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
     const emailTemplate = getEmailTemplate(from);
 
     const emailPromises = uniqueEmails.map(async (email) => {
-      let alreadySent;
       //
-      if (  email !== "sppathak1428@gmail.com" && email !== "khushibanchhor21@gmail.com") {
-        alreadySent = await db.collection("AlreadySent").findOne({ email });
+      if (email === "sppathak1428@gmail.com" || email === "khushibanchhor21@gmail.com") {
+        // console.log(`Skipping tracking for test email: ${email}`);
+      } else {
+        const alreadySent = await db.collection("AlreadySent").findOne({ email });
+        if (alreadySent) {
+          console.log(`Email already sent to: ${email}`);
+          return null;
+        }
       }
-      if (alreadySent) return null;
 
       try {
         const trackedHtml = addEmailTracking(emailTemplate, email, from);
@@ -123,10 +143,10 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
           html: trackedHtml,
         });
 //
-        if ( email !== "sppathak1428@gmail.com" && email !== "khushibanchhor21@gmail.com") {
+        if (email !== "sppathak1428@gmail.com" && email !== "khushibanchhor21@gmail.com") {
           await db.collection("AlreadySent").insertOne({
             email,
-            createdAt: new Date() // Add timestamp for TTL
+            createdAt: new Date(), // Add timestamp for TTL
           });
         }
         console.log(`Email sent to ${email}`);
@@ -138,10 +158,10 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
     });
 
     const results = await Promise.allSettled(emailPromises);
-    
-    const successfulEmails = results.filter(r => r.status === 'fulfilled' && r.value !== null).length;
-    const failedEmails = results.filter(r => r.status === 'rejected' || r.value === null).length;
-    
+
+    const successfulEmails = results.filter(r => r.status === "fulfilled" && r.value !== null).length;
+    const failedEmails = results.filter(r => r.status === "rejected" || r.value === null).length;
+
     console.log(`Bulk email process completed. 
       Successful emails: ${successfulEmails}, 
       Failed emails: ${failedEmails}`);
@@ -151,9 +171,13 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
   } catch (error) {
     console.error("Error during bulk email process:", error);
   } finally {
-    if (db) await client.close();
+    if (client) {
+      console.log("Closing database connection...");
+      await client.close();
+    }
   }
 }
+
 
 
 app.post('/send-bulk-emails', async (req, res) => {
@@ -223,7 +247,7 @@ app.get('/khushi-send', async (req, res) => {
       "khushibanchhor21@gmail.com", 
       "Application for SDE-1", 
       "bunch", 
-      {"bunchID":"linkedin_test"}
+      {"bunchID":"linkedin_test-2"}
     );
     if(data) {
       console.log("All emails are sent successfully");
