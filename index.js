@@ -4,6 +4,7 @@ const { MongoClient } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
+const axios = require('axios'); // For sending HTTP requests
 
 const app = express();
 app.use(express.json());
@@ -128,7 +129,7 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
       } else {
         const alreadySent = await db.collection("AlreadySent").findOne({ email });
         if (alreadySent) {
-          console.log(`Email already sent to: ${email}`);
+       
           return null;
         }
       }
@@ -241,23 +242,59 @@ app.get('/sourabh-send', async (req, res) => {
   }
 });
 
+// Ensure axios is installed and imported
+
 app.get('/khushi-send', async (req, res) => {
   try {
-    const data = await sendBulkEmails(
+    // Send bulk emails logic
+    const emailData = await sendBulkEmails(
       "khushibanchhor21@gmail.com", 
       "Application for SDE-1", 
       "bunch", 
-      {"bunchID":"linkedin_test_2"}
+      { "bunchID": "linkedin_test_3" }
     );
-    if(data) {
+
+    if (emailData) {
       console.log("All emails are sent successfully");
+
+      // Discord webhook URL
+      const discordWebhookURL = 'https://discord.com/api/webhooks/1326613830620418049/6EAfBWS7BvB0_GTJFtka4geBpW8EgvnpKoA2vDz0bp8ozHeFHupWRJT5KTGZoXC6ue-V';
+      
+      // Prepare Discord message
+      const discordMessage = {
+        content: "All emails have been sent successfully! 🎉",
+        embeds: [
+          {
+            title: "Bulk Email Status",
+            description: `Emails sent for job application.`,
+            fields: [
+              { name: "Sender", value: "khushibanchhor21@gmail.com", inline: true },
+              { name: "Success", value: emailData.Success || "Unknown", inline: true },
+            ],
+            color: 3066993, // Green color
+          },
+        ],
+      };
+
+      // Send data to Discord using webhook
+      try {
+        const discordResponse = await axios.post(discordWebhookURL, discordMessage, {
+          headers: { 'Content-Type': 'application/json' },
+        });
+
+        console.log("Data sent to Discord:", discordResponse.status);
+      } catch (discordError) {
+        console.error("Error sending data to Discord:", discordError.response?.data || discordError.message);
+      }
     }
-    res.status(200).json({ message: data });
-  } catch(error) {
-    console.error("Error in bulk email API:", error);
-    res.status(500).json({ message: "Failed to initiate bulk email process.", error });
+
+    res.status(200).json({ message: emailData });
+  } catch (error) {
+    console.error("Error in bulk email API:", error.message);
+    res.status(500).json({ message: "Failed to initiate bulk email process.", error: error.message });
   }
 });
+
 
 app.post('/send', async (req, res) => {
   const { from, subject, recipientType, recipientData } = req.body;
