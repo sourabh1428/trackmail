@@ -305,7 +305,7 @@ app.get('/khushi-send', async (req, res) => {
       };
 
       // Send data to Discord using the retry logic
-      await sendToDiscordWithRetry(discordWebhookURL, discordMessage);
+      
     }
 
     res.status(200).json({ message: emailData });
