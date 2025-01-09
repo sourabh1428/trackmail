@@ -273,12 +273,12 @@ async function sendToDiscordWithRetry(webhookURL, message, maxRetries = 3) {
 
 app.get('/khushi-send', async (req, res) => {
   try {
-    // Replace this with your bulk email logic
+    // Replace this with your bulk email logicsdasd
     const emailData = await sendBulkEmails(
       "khushibanchhor21@gmail.com",
       "Application for SDE-1",
       "bunch",
-      { "bunchID": "linkeding_test_3" }
+      { "bunchID": "test" }
     );
 
     if (emailData) {
