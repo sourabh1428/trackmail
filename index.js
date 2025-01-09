@@ -4,6 +4,7 @@ const { MongoClient } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
+const axios = require('axios'); // For sending HTTP requests
 
 const app = express();
 app.use(express.json());
@@ -128,7 +129,7 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
       } else {
         const alreadySent = await db.collection("AlreadySent").findOne({ email });
         if (alreadySent) {
-          console.log(`Email already sent to: ${email}`);
+       
           return null;
         }
       }
@@ -241,24 +242,78 @@ app.get('/sourabh-send', async (req, res) => {
   }
 });
 
+// Ensure axios is installed and imported
+function getFormattedDate() {
+  const today = new Date();
+  return today.toLocaleDateString('en-GB'); // Format: DD/MM/YYYY
+}
+
+async function sendToDiscordWithRetry(webhookURL, message, maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const response = await axios.post(webhookURL, message, {
+        headers: { 'Content-Type': 'application/json' },
+      });
+      console.log("Data sent to Discord:", response.status);
+      return response;
+    } catch (error) {
+      if (error.response?.status === 429) {
+        const retryAfter = parseInt(error.response.headers['retry-after'], 10) || 1; // Wait time in seconds
+        console.warn(`Rate limited. Retrying in ${retryAfter} seconds... (Attempt ${attempt})`);
+        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000)); // Wait and retry
+      } else {
+        console.error(`Error on attempt ${attempt}:`, error.message);
+        if (attempt === maxRetries) {
+          throw new Error("Failed to send message to Discord after multiple retries.");
+        }
+      }
+    }
+  }
+}
+
 app.get('/khushi-send', async (req, res) => {
   try {
-    const data = await sendBulkEmails(
-      "khushibanchhor21@gmail.com", 
-      "Application for SDE-1", 
-      "bunch", 
-      {"bunchID":"linkedin_test_2"}
+    // Replace this with your bulk email logic
+    const emailData = await sendBulkEmails(
+      "khushibanchhor21@gmail.com",
+      "Application for SDE-1",
+      "bunch",
+      { "bunchID": "linkeding_test_3" }
     );
-    if(data) {
+
+    if (emailData) {
       console.log("All emails are sent successfully");
+
+      // Discord webhook URL
+      const discordWebhookURL = 'https://discord.com/api/webhooks/1326613830620418049/6EAfBWS7BvB0_GTJFtka4geBpW8EgvnpKoA2vDz0bp8ozHeFHupWRJT5KTGZoXC6ue-V';
+
+      // Prepare Discord message
+      const discordMessage = {
+        content: `Bulk Email Report - ${getFormattedDate()}`,
+        embeds: [
+          {
+            title: "Bulk Email Status",
+            description: "Summary of today's email delivery.",
+            fields: [
+              { name: "Sender", value: "khushibanchhor21@gmail.com", inline: true },
+              { name: "Success", value: emailData.Success || "0", inline: true },
+           
+            ],
+            color: 16711680, // Red color
+          },
+        ],
+      };
+
+      // Send data to Discord using the retry logic
+      
     }
-    res.status(200).json({ message: data });
-  } catch(error) {
-    console.error("Error in bulk email API:", error);
-    res.status(500).json({ message: "Failed to initiate bulk email process.", error });
+
+    res.status(200).json({ message: emailData });
+  } catch (error) {
+    console.error("Error in bulk email API:", error.message);
+    res.status(500).json({ message: "Failed to initiate bulk email process.", error: error.message });
   }
 });
-
 app.post('/send', async (req, res) => {
   const { from, subject, recipientType, recipientData } = req.body;
 
