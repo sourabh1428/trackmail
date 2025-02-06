@@ -135,13 +135,13 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
       }
 
       try {
-        const trackedHtml = addEmailTracking(emailTemplate, email, from);
+       
 
         await transporter.sendMail({
           from,
           to: email,
           subject,
-          html: trackedHtml,
+          html: emailTemplate,
         });
 //
         if (email !== "sppathak1428@gmail.com" && email !== "khushibanchhor21@gmail.com") {
