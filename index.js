@@ -278,7 +278,7 @@ app.get('/khushi-send', async (req, res) => {
       "khushibanchhor21@gmail.com",
       "Application for SDE-1",
       "bunch",
-      { "bunchID": "linkedin_test_6" }
+      { "bunchID": "linkedin_test_7" }
     );
 
     if (emailData) {
