@@ -4,7 +4,7 @@ const { MongoClient } = require('mongodb');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
-const axios = require('axios'); // For sending HTTP requests
+const axios = require('axios');
 
 const app = express();
 app.use(express.json());
@@ -29,21 +29,41 @@ function getEmailTemplate(fromEmail) {
 function addEmailTracking(html, email, fromEmail) {
   const encodedEmail = encodeURIComponent(email);
   
+  let trackingBaseUrl;
   if (fromEmail === "khushibanchhor21@gmail.com") {
-    const trackingPixel = `<img src="https://discord-message.khushibanchhor21.workers.dev/track-open?email=${encodedEmail}" width="1" height="1" style="position:absolute;left:-9999px;" alt="Email Open Tracking" />`;
-    const trackedHtml = html.replace(/<a\s+href="([^"]+)"/g, (match, url) => {
-      const trackingURL = `https://discord-message.khushibanchhor21.workers.dev/track-link?email=${encodedEmail}&url=${encodeURIComponent(url)}`;
-      return match.replace(url, trackingURL);
-    });
+    trackingBaseUrl = "https://discord-message.khushibanchhor21.workers.dev";
+  } else {
+    trackingBaseUrl = "https://test-open.sppathak1428.workers.dev";
+  }
+  
+  // Add tracking pixel for open tracking
+  const trackingPixel = `<img src="${trackingBaseUrl}/track-open?email=${encodedEmail}" width="1" height="1" style="position:absolute;left:-9999px;" alt="" />`;
+  
+  // Fix the link tracking issue by properly replacing all links with tracking URLs
+  let trackedHtml = html;
+  
+  // Regular expression to match all <a> tags with href attribute
+  const anchorRegex = /<a\s+(?:[^>]*?\s+)?href=(['"])(.*?)\1/gi;
+  
+  trackedHtml = trackedHtml.replace(anchorRegex, (match, quote, url) => {
+    // Skip if it's already a tracking URL or is a special link like mailto: or #
+    if (url.includes('/track-link') || url.startsWith('#') || url.startsWith('mailto:')) {
+      return match;
+    }
+    
+    // Create tracking URL
+    const trackingURL = `${trackingBaseUrl}/track-link?email=${encodedEmail}&url=${encodeURIComponent(url)}`;
+    
+    // Replace the original URL with the tracking URL
+    return `<a href=${quote}${trackingURL}${quote}`;
+  });
+  
+  // Add the tracking pixel at the end of the body tag
+  if (trackedHtml.includes('</body>')) {
+    return trackedHtml.replace('</body>', `${trackingPixel}</body>`);
+  } else {
     return trackedHtml + trackingPixel;
   }
-
-  const trackingPixel = `<img src="https://test-open.sppathak1428.workers.dev/track-open?email=${encodedEmail}" width="1" height="1" style="position:absolute;left:-9999px;" alt="Email Open Tracking" />`;
-  const trackedHtml = html.replace(/<a\s+href="([^"]+)"/g, (match, url) => {
-    const trackingURL = `https://test-open.sppathak1428.workers.dev/track-link?email=${encodedEmail}&url=${encodeURIComponent(url)}`;
-    return match.replace(url, trackingURL);
-  });
-  return trackedHtml + trackingPixel;
 }
 
 function createTransporter(fromEmail) {
@@ -123,27 +143,26 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
     const emailTemplate = getEmailTemplate(from);
 
     const emailPromises = uniqueEmails.map(async (email) => {
-      //
       if (email === "sppathak1428@gmail.com" || email === "khushibanchhor21@gmail.com") {
-        // console.log(`Skipping tracking for test email: ${email}`);
+        // Skip tracking check for test emails
       } else {
         const alreadySent = await db.collection("AlreadySent").findOne({ email });
         if (alreadySent) {
-       
           return null;
         }
       }
 
       try {
-       
-
+        // Add tracking to the email
+        const trackedHtml = addEmailTracking(emailTemplate, email, from);
+        
         await transporter.sendMail({
           from,
           to: email,
           subject,
-          html: emailTemplate,
+          html: trackedHtml,
         });
-//
+
         if (email !== "sppathak1428@gmail.com" && email !== "khushibanchhor21@gmail.com") {
           await db.collection("AlreadySent").insertOne({
             email,
@@ -171,15 +190,14 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
 
   } catch (error) {
     console.error("Error during bulk email process:", error);
+    throw error;
   } finally {
-    if (client) {
+    if (client && client.topology && client.topology.isConnected()) {
       console.log("Closing database connection...");
       await client.close();
     }
   }
 }
-
-
 
 app.post('/send-bulk-emails', async (req, res) => {
   const { from, subject, recipientType, recipientData } = req.body;
@@ -189,11 +207,17 @@ app.post('/send-bulk-emails', async (req, res) => {
   }
 
   try {
-    sendBulkEmails(from, subject, recipientType, recipientData);
-    res.status(200).json({ message: "Bulk email process initiated." });
+    const result = await sendBulkEmails(from, subject, recipientType, recipientData);
+    res.status(200).json({ 
+      message: "Bulk email process completed.", 
+      stats: {
+        successful: result.Success,
+        failed: result.Failed
+      }
+    });
   } catch (error) {
     console.error("Error in bulk email API:", error);
-    res.status(500).json({ message: "Failed to initiate bulk email process.", error });
+    res.status(500).json({ message: "Failed to complete bulk email process.", error: error.message });
   }
 });
 
@@ -220,7 +244,7 @@ app.post('/send-email', async (req, res) => {
     res.status(200).json({ message: "Email sent successfully!" });
   } catch (error) {
     console.error("Error sending email:", error);
-    res.status(500).json({ message: "Failed to send email", error });
+    res.status(500).json({ message: "Failed to send email", error: error.message });
   }
 });
 
@@ -230,19 +254,20 @@ app.get('/sourabh-send', async (req, res) => {
       "sppathak1428@gmail.com", 
       "Application for SDE-1", 
       "bunch", 
-      {"bunchID":"test"}
+      {"bunchID":"sourabh_test_1"}
     );
+    
     if(data) {
       console.log("All emails are sent successfully");
     }
     res.status(200).json({ message: data });
   } catch(error) {
     console.error("Error in bulk email API:", error);
-    res.status(500).json({ message: "Failed to initiate bulk email process.", error });
+    res.status(500).json({ message: "Failed to initiate bulk email process.", error: error.message });
   }
 });
 
-// Ensure axios is installed and imported
+// Helper function for Discord notifications
 function getFormattedDate() {
   const today = new Date();
   return today.toLocaleDateString('en-GB'); // Format: DD/MM/YYYY
@@ -273,7 +298,6 @@ async function sendToDiscordWithRetry(webhookURL, message, maxRetries = 3) {
 
 app.get('/khushi-send', async (req, res) => {
   try {
-    // Replace this with your bulk email logicsdasd
     const emailData = await sendBulkEmails(
       "khushibanchhor21@gmail.com",
       "Application for SDE-1",
@@ -296,16 +320,17 @@ app.get('/khushi-send', async (req, res) => {
             description: "Summary of today's email delivery.",
             fields: [
               { name: "Sender", value: "khushibanchhor21@gmail.com", inline: true },
-              { name: "Success", value: emailData.Success || "0", inline: true },
-           
+              { name: "Success", value: String(emailData.Success || "0"), inline: true },
+              { name: "Failed", value: String(emailData.Failed || "0"), inline: true },
             ],
-            color: 16711680, // Red color
+            color: 3066993, // Green color
+            timestamp: new Date().toISOString()
           },
         ],
       };
 
       // Send data to Discord using the retry logic
-      
+      await sendToDiscordWithRetry(discordWebhookURL, discordMessage);
     }
 
     res.status(200).json({ message: emailData });
@@ -314,6 +339,7 @@ app.get('/khushi-send', async (req, res) => {
     res.status(500).json({ message: "Failed to initiate bulk email process.", error: error.message });
   }
 });
+
 app.post('/send', async (req, res) => {
   const { from, subject, recipientType, recipientData } = req.body;
 
@@ -322,14 +348,30 @@ app.post('/send', async (req, res) => {
   }
 
   try {
-    sendBulkEmails(from, subject, recipientType, recipientData);
-    res.status(200).json({ message: "Bulk email process initiated." });
+    const result = await sendBulkEmails(from, subject, recipientType, recipientData);
+    res.status(200).json({ 
+      message: "Bulk email process completed.", 
+      result 
+    });
   } catch (error) {
     console.error("Error in bulk email API:", error);
-    res.status(500).json({ message: "Failed to initiate bulk email process.", error });
+    res.status(500).json({ message: "Failed to initiate bulk email process.", error: error.message });
   }
 });
 
+// Test endpoint to see what the tracking HTML looks like
+app.get('/test-tracking', (req, res) => {
+  try {
+    const template = getEmailTemplate("sppathak1428@gmail.com");
+    const trackedHtml = addEmailTracking(template, "test@example.com", "sppathak1428@gmail.com");
+    res.send(trackedHtml);
+  } catch (error) {
+    console.error("Error testing tracking:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('Closing database connection...');
   await client.close();
