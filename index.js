@@ -36,34 +36,19 @@ function addEmailTracking(html, email, fromEmail) {
     trackingBaseUrl = "https://test-open.sppathak1428.workers.dev";
   }
   
-  // Add tracking pixel for open tracking
   const trackingPixel = `<img src="${trackingBaseUrl}/track-open?email=${encodedEmail}" width="1" height="1" style="position:absolute;left:-9999px;" alt="" />`;
   
-  // Fix the link tracking issue by properly replacing all links with tracking URLs
-  let trackedHtml = html;
-  
-  // Regular expression to match all <a> tags with href attribute
-  const anchorRegex = /<a\s+(?:[^>]*?\s+)?href=(['"])(.*?)\1/gi;
-  
-  trackedHtml = trackedHtml.replace(anchorRegex, (match, quote, url) => {
-    // Skip if it's already a tracking URL or is a special link like mailto: or #
+  let trackedHtml = html.replace(/<a\s+(?:[^>]*?\s+)?href=(['"])(.*?)\1/gi, (match, quote, url) => {
     if (url.includes('/track-link') || url.startsWith('#') || url.startsWith('mailto:')) {
       return match;
     }
-    
-    // Create tracking URL
     const trackingURL = `${trackingBaseUrl}/track-link?email=${encodedEmail}&url=${encodeURIComponent(url)}`;
-    
-    // Replace the original URL with the tracking URL
     return `<a href=${quote}${trackingURL}${quote}`;
   });
-  
-  // Add the tracking pixel at the end of the body tag
-  if (trackedHtml.includes('</body>')) {
-    return trackedHtml.replace('</body>', `${trackingPixel}</body>`);
-  } else {
-    return trackedHtml + trackingPixel;
-  }
+
+  return trackedHtml.includes('</body>') 
+    ? trackedHtml.replace('</body>', `${trackingPixel}</body>`)
+    : trackedHtml + trackingPixel;
 }
 
 function createTransporter(fromEmail) {
@@ -72,132 +57,112 @@ function createTransporter(fromEmail) {
     port: 465,
     secure: true,
     pool: true,
-    encoding: "utf-8",
-    maxConnections: 10,
-    rateDelta: 1000,
-    rateLimit: 5,
+    maxConnections: 1,
+    rateLimit: 20,
+    rateDelta: 60000,
+    auth: {
+      user: fromEmail === "khushibanchhor21@gmail.com" ? process.env.EMAIL_USER_2 : process.env.EMAIL_USER,
+      pass: fromEmail === "khushibanchhor21@gmail.com" ? process.env.EMAIL_PASS_2 : process.env.EMAIL_PASS,
+    },
+    tls: { rejectUnauthorized: false }
   };
 
-  if (fromEmail === "khushibanchhor21@gmail.com") {
-    return nodemailer.createTransport({
-      ...config,
-      auth: {
-        user: process.env.EMAIL_USER_2,
-        pass: process.env.EMAIL_PASS_2,
-      },
-    });
-  }
-
-  return nodemailer.createTransport({
-    ...config,
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
+  return nodemailer.createTransport(config);
 }
 
 async function sendBulkEmails(from, subject, recipientType, recipientData) {
   console.log("Starting bulk email process...");
-
-  let db;
+  let db, transporter;
   try {
     await client.connect();
     db = client.db("test_db");
 
-    // Ensure TTL Index is created or updated
-    const indexName = "createdAt_1";
-    const indexes = await db.collection("AlreadySent").indexes();
-    const existingIndex = indexes.find(index => index.name === indexName);
-
-    if (existingIndex) {
-      if (existingIndex.expireAfterSeconds !== 864000) {
-        console.log(`Updating existing index: ${indexName}`);
-        await db.collection("AlreadySent").dropIndex(indexName);
-        await db.collection("AlreadySent").createIndex(
-          { createdAt: 1 },
-          { name: indexName, expireAfterSeconds: 864000 }
-        );
-      }
-    } else {
-      console.log(`Creating new index: ${indexName}`);
-      await db.collection("AlreadySent").createIndex(
-        { createdAt: 1 },
-        { name: indexName, expireAfterSeconds: 864000 }
-      );
-    }
+    // Ensure TTL Index
+    await db.collection("AlreadySent").createIndex(
+      { createdAt: 1 },
+      { expireAfterSeconds: 864000 }
+    );
 
     if (recipientType !== "bunch") {
       console.log("Recipient type is not 'bunch'. Skipping email sending.");
-      return;
+      return { Success: 0, Failed: 0 };
     }
 
-    const users = await db.collection("Users").find({
-      bunchID: recipientData.bunchID,
-    }).toArray();
+    const users = await db.collection("Users").find({ bunchID: recipientData.bunchID }).toArray();
+    const uniqueEmails = [...new Set(users.map(user => user.email).filter(Boolean))];
+    console.log(`Found ${uniqueEmails.length} unique emails.`);
 
-    const uniqueEmails = [...new Set(users.filter(user => user.email).map(user => user.email))];
-    console.log(`Found ${uniqueEmails.length} unique email addresses.`);
+    const alreadySentEmails = await db.collection("AlreadySent")
+      .find({ email: { $in: uniqueEmails } })
+      .project({ email: 1 })
+      .toArray();
+    const alreadySentSet = new Set(alreadySentEmails.map(doc => doc.email));
 
-    const transporter = createTransporter(from);
+    const emailsToSend = uniqueEmails.filter(email => 
+      ["sppathak1428@gmail.com", "khushibanchhor21@gmail.com"].includes(email) || 
+      !alreadySentSet.has(email)
+    );
+
+    if (emailsToSend.length === 0) {
+      console.log("No emails to send after filtering.");
+      return { Success: 0, Failed: 0 };
+    }
+
+    transporter = createTransporter(from);
     const emailTemplate = getEmailTemplate(from);
+    const MAX_RETRIES = 3;
+    let successCount = 0, failureCount = 0;
 
-    const emailPromises = uniqueEmails.map(async (email) => {
-      if (email === "sppathak1428@gmail.com" || email === "khushibanchhor21@gmail.com") {
-        // Skip tracking check for test emails
-      } else {
-        const alreadySent = await db.collection("AlreadySent").findOne({ email });
-        if (alreadySent) {
-          return null;
-        }
-      }
-
-      try {
-        // Add tracking to the email
-        const trackedHtml = addEmailTracking(emailTemplate, email, from);
-        
-        await transporter.sendMail({
-          from,
-          to: email,
-          subject,
-          html: trackedHtml,
-        });
-
-        if (email !== "sppathak1428@gmail.com" && email !== "khushibanchhor21@gmail.com") {
-          await db.collection("AlreadySent").insertOne({
-            email,
-            createdAt: new Date(), // Add timestamp for TTL
+    for (const email of emailsToSend) {
+      let retries = 0;
+      while (retries < MAX_RETRIES) {
+        try {
+          const trackedHtml = addEmailTracking(emailTemplate, email, from);
+          await transporter.sendMail({
+            from,
+            to: email,
+            subject,
+            html: trackedHtml
           });
+
+          if (!["sppathak1428@gmail.com", "khushibanchhor21@gmail.com"].includes(email)) {
+            await db.collection("AlreadySent").insertOne({ email, createdAt: new Date() });
+          }
+
+          successCount++;
+          console.log(`Sent to ${email}`);
+          break;
+        } catch (error) {
+          retries++;
+          console.error(`Error sending to ${email} (Attempt ${retries}): ${error.message}`);
+          if (retries === MAX_RETRIES) {
+            failureCount++;
+            console.error(`Failed after ${MAX_RETRIES} attempts for ${email}`);
+          } else {
+            await new Promise(resolve => setTimeout(resolve, 5000 * retries));
+          }
         }
-        console.log(`Email sent to ${email}`);
-        return email;
-      } catch (error) {
-        console.error(`Error sending email to ${email}:`, error);
-        return null;
       }
-    });
+    }
 
-    const results = await Promise.allSettled(emailPromises);
-
-    const successfulEmails = results.filter(r => r.status === "fulfilled" && r.value !== null).length;
-    const failedEmails = results.filter(r => r.status === "rejected" || r.value === null).length;
-
-    console.log(`Bulk email process completed. 
-      Successful emails: ${successfulEmails}, 
-      Failed emails: ${failedEmails}`);
-
-    return { Success: successfulEmails, Failed: failedEmails };
+    console.log(`Processed ${successCount} emails successfully, ${failureCount} failed.`);
+    return { Success: successCount, Failed: failureCount };
 
   } catch (error) {
-    console.error("Error during bulk email process:", error);
+    console.error("Bulk email error:", error);
     throw error;
   } finally {
-    if (client && client.topology && client.topology.isConnected()) {
-      console.log("Closing database connection...");
-      await client.close();
-    }
+    if (transporter) transporter.close();
+    await client.close();
   }
 }
+
+// Sleep utility function for adding delays
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Process emails in batches with smart retry logic
 
 app.post('/send-bulk-emails', async (req, res) => {
   const { from, subject, recipientType, recipientData } = req.body;
@@ -241,6 +206,7 @@ app.post('/send-email', async (req, res) => {
       replyTo: replyTo || from,
     });
 
+    transporter.close();
     res.status(200).json({ message: "Email sent successfully!" });
   } catch (error) {
     console.error("Error sending email:", error);
@@ -258,7 +224,7 @@ app.get('/sourabh-send', async (req, res) => {
     );
     
     if(data) {
-      console.log("All emails are sent successfully");
+      console.log("Bulk email process completed");
     }
     res.status(200).json({ message: data });
   } catch(error) {
@@ -306,7 +272,7 @@ app.get('/khushi-send', async (req, res) => {
     );
 
     if (emailData) {
-      console.log("All emails are sent successfully");
+      console.log("Bulk email process completed");
 
       // Discord webhook URL
       const discordWebhookURL = 'https://discord.com/api/webhooks/1326613830620418049/6EAfBWS7BvB0_GTJFtka4geBpW8EgvnpKoA2vDz0bp8ozHeFHupWRJT5KTGZoXC6ue-V';
@@ -369,6 +335,11 @@ app.get('/test-tracking', (req, res) => {
     console.error("Error testing tracking:", error);
     res.status(500).json({ error: error.message });
   }
+});
+
+// Simple health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'up', timestamp: new Date().toISOString() });
 });
 
 // Graceful shutdown
