@@ -220,7 +220,7 @@ app.get('/sourabh-send', async (req, res) => {
       "sppathak1428@gmail.com", 
       "Application for SDE-1", 
       "bunch", 
-      {"bunchID":"sourabh_test_1"}
+      {"bunchID":"sourabh_test_2"}
     );
     
     if(data) {
