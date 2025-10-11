@@ -16,25 +16,37 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 });
 
 // Load email templates
-const defaultTemplatePath = path.join(__dirname, './test_2.html');
-const khushiTemplatePath = path.join(__dirname, './test_khushi.html');
+const defaultTemplatePath = path.join(__dirname, './test.html');
 
 function getEmailTemplate(fromEmail) {
-  if (fromEmail === "khushibanchhor21@gmail.com") {
-    return fs.readFileSync(khushiTemplatePath, 'utf8').replace(/\r?\n|\r/g, '');
-  }
   return fs.readFileSync(defaultTemplatePath, 'utf8').replace(/\r?\n|\r/g, '');
+}
+
+function personalizeEmailTemplate(html, recipientData = {}) {
+  // Default values for personalization fields
+  const defaults = {
+    Name: recipientData.name || 'there',
+    Company: recipientData.company || 'your company',
+    Role: recipientData.role || 'SDE-1',
+    CalendlyLink: recipientData.calendlyLink || 'https://calendar.google.com/calendar/u/0',
+    ResumeLink: recipientData.resumeLink || 'https://drive.google.com/file/d/1HgU4xXj6utzQQ3OtW9xyLcXGnTYfHvrR/view?usp=sharing',
+    YourEmail: recipientData.yourEmail || 'sppathak1428@gmail.com'
+  };
+
+  // Replace all personalization fields with their values
+  let personalizedHtml = html;
+  Object.keys(defaults).forEach(key => {
+    const regex = new RegExp(`{{${key}}}`, 'g');
+    personalizedHtml = personalizedHtml.replace(regex, defaults[key]);
+  });
+
+  return personalizedHtml;
 }
 
 function addEmailTracking(html, email, fromEmail) {
   const encodedEmail = encodeURIComponent(email);
   
-  let trackingBaseUrl;
-  if (fromEmail === "khushibanchhor21@gmail.com") {
-    trackingBaseUrl = "https://discord-message.khushibanchhor21.workers.dev";
-  } else {
-    trackingBaseUrl = "https://test-open.sppathak1428.workers.dev";
-  }
+  const trackingBaseUrl = "https://test-open.sppathak1428.workers.dev";
   
   const trackingPixel = `<img src="${trackingBaseUrl}/track-open?email=${encodedEmail}" width="1" height="1" style="position:absolute;left:-9999px;" alt="" />`;
   
@@ -51,7 +63,7 @@ function addEmailTracking(html, email, fromEmail) {
     : trackedHtml + trackingPixel;
 }
 
-function createTransporter(fromEmail) {
+function createTransport(fromEmail) {
   const config = {
     host: "smtp.gmail.com",
     port: 465,
@@ -61,8 +73,8 @@ function createTransporter(fromEmail) {
     rateLimit: 20,
     rateDelta: 60000,
     auth: {
-      user: fromEmail === "khushibanchhor21@gmail.com" ? process.env.EMAIL_USER_2 : process.env.EMAIL_USER,
-      pass: fromEmail === "khushibanchhor21@gmail.com" ? process.env.EMAIL_PASS_2 : process.env.EMAIL_PASS,
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
     },
     tls: { rejectUnauthorized: false }
   };
@@ -73,51 +85,98 @@ function createTransporter(fromEmail) {
 async function sendBulkEmails(from, subject, recipientType, recipientData) {
   console.log("Starting bulk email process...");
   let db, transporter;
+  
   try {
     await client.connect();
-    db = client.db("test_db");
+    db = client.db("Linkedin_scrape");
 
-    // Ensure TTL Index
-    await db.collection("AlreadySent").createIndex(
-      { createdAt: 1 },
-      { expireAfterSeconds: 864000 }
-    );
+    // Create index WITHOUT expiry - emails will be permanently tracked
+    try {
+      await db.collection("AlreadySent").createIndex({ email: 1 }, { unique: true });
+    } catch (indexError) {
+      // Index might already exist, that's fine
+      console.log("Index already exists or creation failed:", indexError.message);
+    }
 
+    // Validate recipient type
     if (recipientType !== "bunch") {
       console.log("Recipient type is not 'bunch'. Skipping email sending.");
       return { Success: 0, Failed: 0 };
     }
 
-    const users = await db.collection("Users").find({ bunchID: recipientData.bunchID }).toArray();
-    const uniqueEmails = [...new Set(users.map(user => user.email).filter(Boolean))];
-    console.log(`Found ${uniqueEmails.length} unique emails.`);
+    // Validate recipientData
+    if (!recipientData || !recipientData.bunchID) {
+      throw new Error("BunchID is required in recipientData");
+    }
 
+    // Get all users from the specified bunch
+    const users = await db.collection("Emails").find({ bunch_id: recipientData.bunchID }).toArray();
+    console.log(`Found ${users.length} users in bunch: ${recipientData.bunchID}`);
+
+    // Extract unique emails and filter out invalid ones
+    const uniqueEmails = [...new Set(
+      users
+        .map(user => user.email)
+        .filter(email => email && email.includes('@')) // Basic email validation
+    )];
+    console.log(`Found ${uniqueEmails.length} unique valid emails.`);
+
+    if (uniqueEmails.length === 0) {
+      console.log("No valid emails found in the bunch.");
+      return { Success: 0, Failed: 0 };
+    }
+
+    // Check which emails have already been sent
     const alreadySentEmails = await db.collection("AlreadySent")
       .find({ email: { $in: uniqueEmails } })
       .project({ email: 1 })
       .toArray();
+    
     const alreadySentSet = new Set(alreadySentEmails.map(doc => doc.email));
+    console.log(`${alreadySentSet.size} emails have already been sent previously.`);
 
+    // Filter emails to send (always include test email for debugging)
     const emailsToSend = uniqueEmails.filter(email => 
-      ["sppathak1428@gmail.com", "khushibanchhor21@gmail.com"].includes(email) || 
-      !alreadySentSet.has(email)
+      email === "sppathak1428@gmail.com" || !alreadySentSet.has(email)
     );
 
+    console.log(`${emailsToSend.length} emails will be sent.`);
+
     if (emailsToSend.length === 0) {
-      console.log("No emails to send after filtering.");
+      console.log("No new emails to send after filtering.");
       return { Success: 0, Failed: 0 };
     }
 
-    transporter = createTransporter(from);
+    // Create transporter and get email template
+    transporter = createTransport(from);
     const emailTemplate = getEmailTemplate(from);
+    
     const MAX_RETRIES = 3;
-    let successCount = 0, failureCount = 0;
+    let successCount = 0;
+    let failureCount = 0;
 
+    // Send emails with retry logic
     for (const email of emailsToSend) {
       let retries = 0;
+      
       while (retries < MAX_RETRIES) {
         try {
-          const trackedHtml = addEmailTracking(emailTemplate, email, from);
+          // Find user data for personalization
+          const userData = users.find(user => user.email === email) || {};
+          
+          // Merge user data with recipientData for personalization
+          const personalizationData = {
+            ...recipientData,
+            name: userData.name || userData.fullName || recipientData.name,
+            company: userData.company || recipientData.company,
+            role: userData.role || userData.title || recipientData.role
+          };
+
+          // Personalize and add tracking
+          const personalizedHtml = personalizeEmailTemplate(emailTemplate, personalizationData);
+          const trackedHtml = addEmailTracking(personalizedHtml, email, from);
+
+          // Send email
           await transporter.sendMail({
             from,
             to: email,
@@ -125,34 +184,60 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
             html: trackedHtml
           });
 
-          if (!["sppathak1428@gmail.com", "khushibanchhor21@gmail.com"].includes(email)) {
-            await db.collection("AlreadySent").insertOne({ email, createdAt: new Date() });
+          // Mark as sent (except for test email)
+          if (email !== "sppathak1428@gmail.com") {
+            try {
+              await db.collection("AlreadySent").insertOne({ 
+                email, 
+                sentAt: new Date(),
+                bunchID: recipientData.bunchID,
+                subject: subject
+              });
+            } catch (insertError) {
+              // Handle duplicate key error (email already exists)
+              if (insertError.code !== 11000) {
+                console.error(`Error marking email as sent for ${email}:`, insertError.message);
+              }
+            }
           }
 
           successCount++;
-          console.log(`Sent to ${email}`);
-          break;
+          console.log(`✅ Successfully sent to ${email}`);
+          break; // Success, exit retry loop
+
         } catch (error) {
           retries++;
-          console.error(`Error sending to ${email} (Attempt ${retries}): ${error.message}`);
+          console.error(`❌ Error sending to ${email} (Attempt ${retries}/${MAX_RETRIES}):`, error.message);
+          
           if (retries === MAX_RETRIES) {
             failureCount++;
-            console.error(`Failed after ${MAX_RETRIES} attempts for ${email}`);
+            console.error(`🚫 Failed permanently after ${MAX_RETRIES} attempts for ${email}`);
           } else {
-            await new Promise(resolve => setTimeout(resolve, 5000 * retries));
+            // Exponential backoff: wait longer between retries
+            const delay = 5000 * Math.pow(2, retries - 1);
+            console.log(`⏳ Waiting ${delay}ms before retry...`);
+            await new Promise(resolve => setTimeout(resolve, delay));
           }
         }
       }
+
+      // Add small delay between emails to avoid rate limiting
+      if (emailsToSend.indexOf(email) < emailsToSend.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
 
-    console.log(`Processed ${successCount} emails successfully, ${failureCount} failed.`);
+    console.log(`📊 Email sending completed: ${successCount} successful, ${failureCount} failed.`);
     return { Success: successCount, Failed: failureCount };
 
   } catch (error) {
-    console.error("Bulk email error:", error);
+    console.error("💥 Bulk email process error:", error);
     throw error;
   } finally {
-    if (transporter) transporter.close();
+    // Clean up resources
+    if (transporter) {
+      transporter.close();
+    }
     await client.close();
   }
 }
@@ -161,8 +246,6 @@ async function sendBulkEmails(from, subject, recipientType, recipientData) {
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
-
-// Process emails in batches with smart retry logic
 
 app.post('/send-bulk-emails', async (req, res) => {
   const { from, subject, recipientType, recipientData } = req.body;
@@ -194,9 +277,12 @@ app.post('/send-email', async (req, res) => {
   }
 
   try {
-    const transporter = createTransporter(from);
+    const transporter = createTransport(from);
     const emailTemplate = getEmailTemplate(from);
-    const trackedHtml = addEmailTracking(emailTemplate, to, from);
+    
+    // Personalize the email template
+    const personalizedHtml = personalizeEmailTemplate(emailTemplate, req.body);
+    const trackedHtml = addEmailTracking(personalizedHtml, to, from);
 
     await transporter.sendMail({
       from,
@@ -233,79 +319,6 @@ app.get('/sourabh-send', async (req, res) => {
   }
 });
 
-// Helper function for Discord notifications
-function getFormattedDate() {
-  const today = new Date();
-  return today.toLocaleDateString('en-GB'); // Format: DD/MM/YYYY
-}
-
-async function sendToDiscordWithRetry(webhookURL, message, maxRetries = 3) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      const response = await axios.post(webhookURL, message, {
-        headers: { 'Content-Type': 'application/json' },
-      });
-      console.log("Data sent to Discord:", response.status);
-      return response;
-    } catch (error) {
-      if (error.response?.status === 429) {
-        const retryAfter = parseInt(error.response.headers['retry-after'], 10) || 1; // Wait time in seconds
-        console.warn(`Rate limited. Retrying in ${retryAfter} seconds... (Attempt ${attempt})`);
-        await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000)); // Wait and retry
-      } else {
-        console.error(`Error on attempt ${attempt}:`, error.message);
-        if (attempt === maxRetries) {
-          throw new Error("Failed to send message to Discord after multiple retries.");
-        }
-      }
-    }
-  }
-}
-
-app.get('/khushi-send', async (req, res) => {
-  try {
-    const emailData = await sendBulkEmails(
-      "khushibanchhor21@gmail.com",
-      "Application for SDE-1",
-      "bunch",
-      { "bunchID": "linkedin_test_7" }
-    );
-
-    if (emailData) {
-      console.log("Bulk email process completed");
-
-      // Discord webhook URL
-      const discordWebhookURL = 'https://discord.com/api/webhooks/1326613830620418049/6EAfBWS7BvB0_GTJFtka4geBpW8EgvnpKoA2vDz0bp8ozHeFHupWRJT5KTGZoXC6ue-V';
-
-      // Prepare Discord message
-      const discordMessage = {
-        content: `Bulk Email Report - ${getFormattedDate()}`,
-        embeds: [
-          {
-            title: "Bulk Email Status",
-            description: "Summary of today's email delivery.",
-            fields: [
-              { name: "Sender", value: "khushibanchhor21@gmail.com", inline: true },
-              { name: "Success", value: String(emailData.Success || "0"), inline: true },
-              { name: "Failed", value: String(emailData.Failed || "0"), inline: true },
-            ],
-            color: 3066993, // Green color
-            timestamp: new Date().toISOString()
-          },
-        ],
-      };
-
-      // Send data to Discord using the retry logic
-      await sendToDiscordWithRetry(discordWebhookURL, discordMessage);
-    }
-
-    res.status(200).json({ message: emailData });
-  } catch (error) {
-    console.error("Error in bulk email API:", error.message);
-    res.status(500).json({ message: "Failed to initiate bulk email process.", error: error.message });
-  }
-});
-
 app.post('/send', async (req, res) => {
   const { from, subject, recipientType, recipientData } = req.body;
 
@@ -325,14 +338,66 @@ app.post('/send', async (req, res) => {
   }
 });
 
+// Get list of emails that have already been sent
+app.get('/already-sent', async (req, res) => {
+  try {
+    await client.connect();
+    const db = client.db("Linkedin_scrape");
+    
+    const alreadySent = await db.collection("AlreadySent").find({}).toArray();
+    
+    res.status(200).json({ 
+      count: alreadySent.length,
+      emails: alreadySent 
+    });
+  } catch (error) {
+    console.error("Error fetching already sent emails:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    await client.close();
+  }
+});
+
+// Clear already sent list (use with caution!)
+app.delete('/clear-already-sent', async (req, res) => {
+  try {
+    await client.connect();
+    const db = client.db("Linkedin_scrape");
+    
+    const result = await db.collection("AlreadySent").deleteMany({});
+    
+    res.status(200).json({ 
+      message: `Cleared ${result.deletedCount} records from AlreadySent collection`
+    });
+  } catch (error) {
+    console.error("Error clearing already sent emails:", error);
+    res.status(500).json({ error: error.message });
+  } finally {
+    await client.close();
+  }
+});
+
 // Test endpoint to see what the tracking HTML looks like
 app.get('/test-tracking', (req, res) => {
   try {
     const template = getEmailTemplate("sppathak1428@gmail.com");
-    const trackedHtml = addEmailTracking(template, "test@example.com", "sppathak1428@gmail.com");
+    const personalizedHtml = personalizeEmailTemplate(template, {});
+    const trackedHtml = addEmailTracking(personalizedHtml, "test@example.com", "sppathak1428@gmail.com");
     res.send(trackedHtml);
   } catch (error) {
     console.error("Error testing tracking:", error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Test endpoint to see personalized email template
+app.post('/test-personalization', (req, res) => {
+  try {
+    const template = getEmailTemplate("sppathak1428@gmail.com");
+    const personalizedHtml = personalizeEmailTemplate(template, req.body);
+    res.send(personalizedHtml);
+  } catch (error) {
+    console.error("Error testing personalization:", error);
     res.status(500).json({ error: error.message });
   }
 });
