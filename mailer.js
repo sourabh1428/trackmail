@@ -2,52 +2,31 @@
 
 const nodemailer = require("nodemailer");
 
-const {
-	EMAIL_USER,
-	EMAIL_PASS,
-} = process.env;
+const { EMAIL_USER, EMAIL_PASS } = process.env;
 
 if (!EMAIL_USER || !EMAIL_PASS) {
-	console.warn("[mailer] EMAIL_USER/EMAIL_PASS not set. Emails will fail until provided.");
+  console.warn("[mailer] EMAIL_USER/EMAIL_PASS not set. Emails will fail until provided.");
 }
 
-// Create a single reusable transporter for the app lifecycle
 const transporter = nodemailer.createTransport({
-	host: "smtp.gmail.com",
-	port: 465,
-	secure: true,
-	auth: {
-		user: EMAIL_USER,
-		pass: EMAIL_PASS,
-	},
+  host: "smtp.gmail.com",
+  port: 465,
+  secure: true,
+  auth: { user: EMAIL_USER, pass: EMAIL_PASS },
 });
 
-/**
- * Send an email using the shared transporter.
- * @param {Object} options
- * @param {string} options.to - Recipient email address
- * @param {string} options.subject - Email subject
- * @param {string} [options.text] - Plain text body
- * @param {string} [options.html] - HTML body
- * @param {Array} [options.attachments] - Nodemailer attachments
- * @returns {Promise<object>} Nodemailer response
- */
-async function sendEmail({ to, subject, text, html, attachments }) {
-	if (!to) throw new Error("'to' is required");
-	if (!subject) throw new Error("'subject' is required");
+// Verify SMTP credentials at startup — fail fast rather than on first send
+transporter.verify().then(() => {
+  console.log("[mailer] SMTP connection verified");
+}).catch(err => {
+  console.error("[mailer] SMTP verification failed:", err.message);
+  process.exit(1);
+});
 
-	const info = await transporter.sendMail({
-		from: EMAIL_USER,
-		to,
-		subject,
-		text,
-		html,
-		attachments,
-	});
-	return info;
+async function sendEmail({ to, subject, text, html, attachments }) {
+  if (!to) throw new Error("'to' is required");
+  if (!subject) throw new Error("'subject' is required");
+  return transporter.sendMail({ from: EMAIL_USER, to, subject, text, html, attachments });
 }
 
-module.exports = {
-	transporter,
-	sendEmail,
-};
+module.exports = { transporter, sendEmail };
