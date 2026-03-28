@@ -36,10 +36,16 @@ describe("GET /api/templates", () => {
     const res = await request(app).get("/api/templates").set("Authorization", `Bearer ${makeToken()}`);
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
+    expect(res.body[0].html).toBeUndefined();
   });
 });
 
 describe("GET /api/templates/active", () => {
+  it("returns 401 without token", async () => {
+    const res = await request(app).get("/api/templates/active");
+    expect(res.status).toBe(401);
+  });
+
   it("returns 404 when no active template", async () => {
     getDB.mockReturnValue({ collection: jest.fn(() => ({ findOne: jest.fn().mockResolvedValue(null) })) });
     const res = await request(app).get("/api/templates/active").set("Authorization", `Bearer ${makeToken()}`);
@@ -75,10 +81,49 @@ describe("POST /api/templates", () => {
     expect(res.status).toBe(201);
     expect(res.body.isActive).toBe(false);
     expect(res.body.name).toBe("Test");
+    expect(res.body.createdAt).toBeTruthy();
+  });
+});
+
+describe("PUT /api/templates/:id", () => {
+  it("returns 401 without token", async () => {
+    const res = await request(app).put(`/api/templates/${fakeId}`).send({ name: "New Name" });
+    expect(res.status).toBe(401);
+  });
+
+  it("returns 400 when neither name nor html provided", async () => {
+    const res = await request(app).put(`/api/templates/${fakeId}`).set("Authorization", `Bearer ${makeToken()}`).send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 200 {ok:true} on successful update", async () => {
+    getDB.mockReturnValue({
+      collection: jest.fn(() => ({
+        updateOne: jest.fn().mockResolvedValue({ matchedCount: 1 }),
+      })),
+    });
+    const res = await request(app).put(`/api/templates/${fakeId}`).set("Authorization", `Bearer ${makeToken()}`).send({ name: "Updated Name" });
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+
+  it("returns 404 when template not found (matchedCount=0)", async () => {
+    getDB.mockReturnValue({
+      collection: jest.fn(() => ({
+        updateOne: jest.fn().mockResolvedValue({ matchedCount: 0 }),
+      })),
+    });
+    const res = await request(app).put(`/api/templates/${fakeId}`).set("Authorization", `Bearer ${makeToken()}`).send({ name: "Updated Name" });
+    expect(res.status).toBe(404);
   });
 });
 
 describe("DELETE /api/templates/:id", () => {
+  it("returns 401 without token", async () => {
+    const res = await request(app).delete(`/api/templates/${fakeId}`);
+    expect(res.status).toBe(401);
+  });
+
   it("rejects deletion of active template", async () => {
     getDB.mockReturnValue({
       collection: jest.fn(() => ({
@@ -104,6 +149,11 @@ describe("DELETE /api/templates/:id", () => {
 });
 
 describe("POST /api/templates/:id/activate", () => {
+  it("returns 401 without token", async () => {
+    const res = await request(app).post(`/api/templates/${fakeId}/activate`);
+    expect(res.status).toBe(401);
+  });
+
   it("activates a template via bulkWrite", async () => {
     const bulkWrite = jest.fn().mockResolvedValue({});
     getDB.mockReturnValue({ collection: jest.fn(() => ({ bulkWrite })) });
@@ -114,5 +164,14 @@ describe("POST /api/templates/:id/activate", () => {
       expect.objectContaining({ updateMany: expect.any(Object) }),
       expect.objectContaining({ updateOne: expect.any(Object) }),
     ]));
+  });
+
+  it("calls bulkWrite with deactivate-all first, then activate target", async () => {
+    const bulkWrite = jest.fn().mockResolvedValue({});
+    getDB.mockReturnValue({ collection: jest.fn(() => ({ bulkWrite })) });
+    await request(app).post(`/api/templates/${fakeId}/activate`).set("Authorization", `Bearer ${makeToken()}`);
+    const [ops] = bulkWrite.mock.calls;
+    expect(ops[0][0]).toHaveProperty("updateMany");
+    expect(ops[0][1]).toHaveProperty("updateOne");
   });
 });
