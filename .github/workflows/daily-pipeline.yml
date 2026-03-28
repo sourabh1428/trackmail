@@ -1,0 +1,84 @@
+name: Daily Pipeline — Scrape → Send Emails
+
+on:
+  # Runs every day at 12:00 PM UTC (5:30 PM IST)
+  schedule:
+    - cron: "0 12 * * *"
+
+  # Manual trigger with optional overrides
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run — preview without sending (true/false)"
+        required: false
+        default: "false"
+      bunch_id:
+        description: "Override bunchID (leave blank for today's DDMMYY)"
+        required: false
+
+jobs:
+  # ── Job 1: LinkedIn scraper ────────────────────────────────────────────────
+  scrape:
+    name: Scrape LinkedIn emails
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: scraper
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip setuptools wheel
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: Install Playwright + Chromium
+        run: python -m playwright install --with-deps chromium
+
+      - name: Run scraper
+        env:
+          LINKEDIN_EMAIL:    ${{ secrets.LINKEDIN_EMAIL }}
+          LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
+          MONGODB_URI:       ${{ secrets.MONGODB_URI }}
+          MONGODB_DATABASE:  Linkedin_scrape
+          MONGODB_COLLECTION: Emails
+          HEADLESS_MODE:     true
+          PYTHONUNBUFFERED:  1
+        run: python main.py
+
+  # ── Job 2: Send bulk emails (runs only after scrape succeeds) ──────────────
+  send:
+    name: Send bulk emails
+    needs: scrape
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --omit=dev
+
+      - name: Send today's emails
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          EMAIL_USER:  ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS:  ${{ secrets.EMAIL_PASS }}
+          BUNCH_ID:    ${{ inputs.bunch_id || '' }}
+          DRY_RUN:     ${{ inputs.dry_run || 'false' }}
+        run: node send-daily-emails.js
