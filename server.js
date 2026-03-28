@@ -28,9 +28,9 @@ const { PORT = 3000 } = process.env;
 app.use("/auth", require("./routes/auth"));    // POST /auth/login
 app.use("/", require("./routes/tracking"));    // POST /track-event (x-track-secret)
 
-app.get("/health", (req, res) => {
+app.get("/health", async (req, res) => {
   try {
-    getDB();
+    await getDB().command({ ping: 1 });
     return res.json({ ok: true });
   } catch (e) {
     return res.status(500).json({ ok: false, error: e.message });
@@ -148,12 +148,11 @@ process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
 // Start: verify SMTP, connect DB, then listen
-require("./mailer").transporter.verify()
-  .then(() => console.log("[mailer] SMTP verified"))
-  .catch(err => { console.error("[mailer] SMTP failed:", err.message); process.exit(1); });
+async function start() {
+  await require("./mailer").transporter.verify();
+  console.log("[mailer] SMTP verified");
+  await connectDB();
+  app.listen(PORT, () => console.log(`[server] listening on port ${PORT}`));
+}
 
-connectDB()
-  .then(() => {
-    app.listen(PORT, () => console.log(`[server] listening on port ${PORT}`));
-  })
-  .catch(e => { console.error("[server] startup failed:", e); process.exit(1); });
+start().catch(err => { console.error("[server] startup failed:", err.message); process.exit(1); });
