@@ -9,12 +9,15 @@
   },
   "jest": {
     "testEnvironment": "node",
-    "testMatch": ["**/tests/**/*.test.js"]
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ]
   },
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "dotenv": "^16.4.7",
     "emailer": "file:",

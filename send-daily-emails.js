@@ -17,7 +17,7 @@ function todayBunchID() {
 }
 
 const TEMPLATE_PATH = path.join(__dirname, "test.html");
-const TRACKING_BASE = "https://test-open.sppathak1428.workers.dev";
+const TRACKING_BASE = process.env.TRACKING_WORKER_URL || "https://test-open.sppathak1428.workers.dev";
 
 function loadFallbackTemplate() {
   return fs.readFileSync(TEMPLATE_PATH, "utf8").replace(/\r?\n|\r/g, "");
