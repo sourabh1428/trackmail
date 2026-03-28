@@ -48,7 +48,8 @@ class LinkedInScraper:
 		
 		results = {}
 		pages = []
-		
+		shared_mongo = None
+
 		try:
 			# Open ALL tabs
 			print("🚀 Opening ALL tabs simultaneously...")
@@ -65,10 +66,9 @@ class LinkedInScraper:
 				pages.append((page, link, i+1))
 			print(f"✅ All {len(links)} tabs opened successfully!")
 			print("🔍 Starting round-robin scrolling across all tabs...")
-			
+
 			# Create ONE shared MongoDB client for the entire scrape session
 			mongodb_uri = os.getenv('MONGODB_URI')
-			shared_mongo = None
 			if mongodb_uri:
 				try:
 					shared_mongo = PyMongoClient(mongodb_uri)
@@ -242,12 +242,12 @@ class LinkedInScraper:
 					context.close()
 				except Exception as e:
 					print(f"⚠️ Warning: Error closing main context: {e}")
-				if shared_mongo:
-					try:
-						shared_mongo.close()
-						print("🔒 Shared MongoDB client closed")
-					except Exception as e:
-						print(f"⚠️ Error closing MongoDB client: {e}")
+			if shared_mongo:
+				try:
+					shared_mongo.close()
+					print("🔒 Shared MongoDB client closed")
+				except Exception as e:
+					print(f"⚠️ Error closing MongoDB client: {e}")
 
 		print(f"\n🎉 All tabs processed with concurrent scrolling! Total results: {sum(len(v) for v in results.values())} emails")
 		return results

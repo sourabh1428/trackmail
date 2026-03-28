@@ -15,13 +15,7 @@ const transporter = nodemailer.createTransport({
   auth: { user: EMAIL_USER, pass: EMAIL_PASS },
 });
 
-// Verify SMTP credentials at startup — fail fast rather than on first send
-transporter.verify().then(() => {
-  console.log("[mailer] SMTP connection verified");
-}).catch(err => {
-  console.error("[mailer] SMTP verification failed:", err.message);
-  process.exit(1);
-});
+// transporter.verify() is called by server.js start() to fail fast on bad credentials
 
 async function sendEmail({ to, subject, text, html, attachments }) {
   if (!to) throw new Error("'to' is required");

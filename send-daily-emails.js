@@ -80,88 +80,89 @@ async function main() {
 
   const mongo = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
   await mongo.connect();
-  const db = mongo.db("Linkedin_scrape");
-  const emailsColl = db.collection("Emails");
-  const alreadySentCol = db.collection("AlreadySent");
+  let transporter;
+  try {
+    const db = mongo.db("Linkedin_scrape");
+    const emailsColl = db.collection("Emails");
+    const alreadySentCol = db.collection("AlreadySent");
 
-  await alreadySentCol.createIndex({ email: 1 }, { unique: true }).catch(() => {});
+    await alreadySentCol.createIndex({ email: 1 }, { unique: true }).catch(() => {});
 
-  const users = await emailsColl.find({ bunch_id: bunchID }).toArray();
-  console.log(`📋 Found ${users.length} recipients for bunch "${bunchID}"`);
+    const users = await emailsColl.find({ bunch_id: bunchID }).toArray();
+    console.log(`📋 Found ${users.length} recipients for bunch "${bunchID}"`);
 
-  if (!users.length) {
-    console.log("ℹ️  Nothing to send. Exiting.");
-    await mongo.close();
-    return;
-  }
-
-  const validEmails = [...new Set(
-    users.map(u => u.email).filter(e => e && EMAIL_REGEX.test(e))
-  )];
-
-  const sent = await alreadySentCol
-    .find({ email: { $in: validEmails } })
-    .project({ email: 1 })
-    .toArray();
-  const sentSet = new Set(sent.map(d => d.email));
-
-  const toSend = validEmails.filter(e => e === EMAIL_USER || !sentSet.has(e));
-  console.log(`✉️  To send: ${toSend.length}  (${sentSet.size} already sent, skipped)\n`);
-
-  if (!toSend.length) {
-    console.log("✅ All emails already sent for today.");
-    await mongo.close();
-    return;
-  }
-
-  const transporter = nodemailer.createTransport({
-    host: "smtp.gmail.com",
-    port: 465,
-    secure: true,
-    pool: true,
-    maxConnections: 1,
-    rateLimit: 20,
-    rateDelta: 60000,
-    auth: { user: EMAIL_USER, pass: EMAIL_PASS },
-    // Note: no tls.rejectUnauthorized override — Nodemailer defaults are correct for smtp.gmail.com:465
-  });
-
-  const template = await loadActiveTemplate(db);
-  const SUBJECT = "Application for software engineering role";
-  let success = 0, failed = 0;
-
-  for (const email of toSend) {
-    const html = addTracking(template, email, bunchID);
-
-    if (isDry) {
-      console.log(`  [DRY] would send → ${email}`);
-      success++;
-      continue;
+    if (!users.length) {
+      console.log("ℹ️  Nothing to send. Exiting.");
+      return;
     }
 
-    try {
-      await retry(() => transporter.sendMail({ from: EMAIL_USER, to: email, subject: SUBJECT, html }));
+    const validEmails = [...new Set(
+      users.map(u => u.email).filter(e => e && EMAIL_REGEX.test(e))
+    )];
 
-      if (email !== EMAIL_USER) {
-        await alreadySentCol.insertOne({ email, sentAt: new Date(), bunch_id: bunchID, subject: SUBJECT })
-          .catch(e => { if (e.code !== 11000) throw e; });
+    const sent = await alreadySentCol
+      .find({ email: { $in: validEmails } })
+      .project({ email: 1 })
+      .toArray();
+    const sentSet = new Set(sent.map(d => d.email));
+
+    const toSend = validEmails.filter(e => e === EMAIL_USER || !sentSet.has(e));
+    console.log(`✉️  To send: ${toSend.length}  (${sentSet.size} already sent, skipped)\n`);
+
+    if (!toSend.length) {
+      console.log("✅ All emails already sent for today.");
+      return;
+    }
+
+    transporter = nodemailer.createTransport({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      pool: true,
+      maxConnections: 1,
+      rateLimit: 20,
+      rateDelta: 60000,
+      auth: { user: EMAIL_USER, pass: EMAIL_PASS },
+      // Note: no tls.rejectUnauthorized override — Nodemailer defaults are correct for smtp.gmail.com:465
+    });
+
+    const template = await loadActiveTemplate(db);
+    const SUBJECT = "Application for software engineering role";
+    let success = 0, failed = 0;
+
+    for (const email of toSend) {
+      const html = addTracking(template, email, bunchID);
+
+      if (isDry) {
+        console.log(`  [DRY] would send → ${email}`);
+        success++;
+        continue;
       }
 
-      success++;
-      console.log(`  ✅ ${email}`);
-    } catch (e) {
-      failed++;
-      console.error(`  ❌ ${email} — ${e.message}`);
+      try {
+        await retry(() => transporter.sendMail({ from: EMAIL_USER, to: email, subject: SUBJECT, html }));
+
+        if (email !== EMAIL_USER) {
+          await alreadySentCol.insertOne({ email, sentAt: new Date(), bunch_id: bunchID, subject: SUBJECT })
+            .catch(e => { if (e.code !== 11000) throw e; });
+        }
+
+        success++;
+        console.log(`  ✅ ${email}`);
+      } catch (e) {
+        failed++;
+        console.error(`  ❌ ${email} — ${e.message}`);
+      }
+
+      await new Promise(r => setTimeout(r, 1200));
     }
 
-    await new Promise(r => setTimeout(r, 1200));
+    console.log(`\n📊 Done — success: ${success}, failed: ${failed}`);
+    if (failed > 0) process.exit(1);
+  } finally {
+    if (transporter) transporter.close();
+    await mongo.close();
   }
-
-  transporter.close();
-  await mongo.close();
-
-  console.log(`\n📊 Done — success: ${success}, failed: ${failed}`);
-  if (failed > 0) process.exit(1);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

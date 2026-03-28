@@ -174,6 +174,10 @@ app.use((err, req, res, next) => {
 	return res.status(500).json({ ok: false, error: "Internal server error" });
 });
 
+require('./mailer').transporter.verify()
+  .then(() => console.log('[mailer] SMTP verified'))
+  .catch(err => { console.error('[mailer] SMTP failed:', err.message); process.exit(1); });
+
 app.listen(PORT, () => {
 	console.log(`[server] listening on port ${PORT}`);
 });
