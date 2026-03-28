@@ -54,6 +54,9 @@ router.post("/templates", async (req, res) => {
 
 // PUT /api/templates/:id — update name or html
 router.put("/templates/:id", async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: "Invalid template id" });
+  }
   const { name, html } = req.body || {};
   const update = {};
   if (name) update.name = name;
@@ -75,6 +78,9 @@ router.put("/templates/:id", async (req, res) => {
 
 // DELETE /api/templates/:id — reject if isActive
 router.delete("/templates/:id", async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: "Invalid template id" });
+  }
   try {
     const db = getDB();
     const tmpl = await db.collection("EmailTemplates").findOne({ _id: new ObjectId(req.params.id) });
@@ -90,9 +96,15 @@ router.delete("/templates/:id", async (req, res) => {
 
 // POST /api/templates/:id/activate — bulkWrite: deactivate all, then activate one
 router.post("/templates/:id/activate", async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: "Invalid template id" });
+  }
   try {
     const _id = new ObjectId(req.params.id);
-    await getDB().collection("EmailTemplates").bulkWrite([
+    const db = getDB();
+    const exists = await db.collection("EmailTemplates").findOne({ _id }, { projection: { _id: 1 } });
+    if (!exists) return res.status(404).json({ error: "Template not found" });
+    await db.collection("EmailTemplates").bulkWrite([
       { updateMany: { filter: {}, update: { $set: { isActive: false } } } },
       { updateOne: { filter: { _id }, update: { $set: { isActive: true, updatedAt: new Date() } } } },
     ]);

@@ -116,6 +116,11 @@ describe("PUT /api/templates/:id", () => {
     const res = await request(app).put(`/api/templates/${fakeId}`).set("Authorization", `Bearer ${makeToken()}`).send({ name: "Updated Name" });
     expect(res.status).toBe(404);
   });
+
+  it("returns 400 for invalid id", async () => {
+    const res = await request(app).put("/api/templates/not-an-id").set("Authorization", `Bearer ${makeToken()}`).send({ name: "x" });
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("DELETE /api/templates/:id", () => {
@@ -146,6 +151,11 @@ describe("DELETE /api/templates/:id", () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
   });
+
+  it("returns 400 for invalid id", async () => {
+    const res = await request(app).delete("/api/templates/not-an-id").set("Authorization", `Bearer ${makeToken()}`);
+    expect(res.status).toBe(400);
+  });
 });
 
 describe("POST /api/templates/:id/activate", () => {
@@ -154,24 +164,30 @@ describe("POST /api/templates/:id/activate", () => {
     expect(res.status).toBe(401);
   });
 
-  it("activates a template via bulkWrite", async () => {
+  it("activates a template via bulkWrite with deactivate-all first, then activate target", async () => {
     const bulkWrite = jest.fn().mockResolvedValue({});
-    getDB.mockReturnValue({ collection: jest.fn(() => ({ bulkWrite })) });
+    const findOne = jest.fn().mockResolvedValue({ _id: fakeId });
+    getDB.mockReturnValue({ collection: jest.fn(() => ({ findOne, bulkWrite })) });
     const res = await request(app).post(`/api/templates/${fakeId}/activate`).set("Authorization", `Bearer ${makeToken()}`);
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
-    expect(bulkWrite).toHaveBeenCalledWith(expect.arrayContaining([
-      expect.objectContaining({ updateMany: expect.any(Object) }),
-      expect.objectContaining({ updateOne: expect.any(Object) }),
-    ]));
-  });
-
-  it("calls bulkWrite with deactivate-all first, then activate target", async () => {
-    const bulkWrite = jest.fn().mockResolvedValue({});
-    getDB.mockReturnValue({ collection: jest.fn(() => ({ bulkWrite })) });
-    await request(app).post(`/api/templates/${fakeId}/activate`).set("Authorization", `Bearer ${makeToken()}`);
+    expect(bulkWrite).toHaveBeenCalledTimes(1);
     const [ops] = bulkWrite.mock.calls;
     expect(ops[0][0]).toHaveProperty("updateMany");
     expect(ops[0][1]).toHaveProperty("updateOne");
+  });
+
+  it("returns 404 when template not found", async () => {
+    getDB.mockReturnValue({ collection: jest.fn(() => ({
+      findOne: jest.fn().mockResolvedValue(null),
+      bulkWrite: jest.fn(),
+    })) });
+    const res = await request(app).post(`/api/templates/${fakeId}/activate`).set("Authorization", `Bearer ${makeToken()}`);
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for invalid id", async () => {
+    const res = await request(app).post("/api/templates/not-an-id/activate").set("Authorization", `Bearer ${makeToken()}`);
+    expect(res.status).toBe(400);
   });
 });
