@@ -1,0 +1,97 @@
+{
+  "info": {
+    "_postman_id": "77fe2ff7-72ec-41a5-9447-3985ee90ab8a",
+    "name": "Trackmail API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "id": "b0daf41b-58fd-4f0a-ab50-b02a393194d7",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/health",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "health"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Send Single Email",
+      "id": "885220f6-bcb3-4787-b594-18454336ac33",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"to\": \"recipient@example.com\",\n  \"subject\": \"Your subject here\",\n  \"html\": \"<h1>Your HTML content here</h1>\",\n  \"trackId\": \"optional-unique-id\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/send-email",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "send-email"
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "Send Bulk Emails",
+      "id": "d59b7b19-b0fb-49b8-b359-ab19721ab701",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bunchID\": \"280326\",\n  \"subject\": \"Your subject here\",\n  \"htmlTemplate\": \"<h1>Your HTML content here</h1>\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/send-bulk-emails",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "3000",
+          "path": [
+            "send-bulk-emails"
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}

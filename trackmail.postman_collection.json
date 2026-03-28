@@ -1,0 +1,79 @@
+{
+  "info": {
+    "name": "Trackmail API",
+    "_postman_id": "trackmail-api-collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:3000/health",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "3000",
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Send Single Email",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"to\": \"recipient@example.com\",\n  \"subject\": \"Your subject here\",\n  \"html\": \"<h1>Your HTML content here</h1>\",\n  \"trackId\": \"optional-unique-id\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/send-email",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "3000",
+          "path": ["send-email"]
+        }
+      }
+    },
+    {
+      "name": "Send Bulk Emails",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"bunchID\": \"280326\",\n  \"subject\": \"Your subject here\",\n  \"htmlTemplate\": \"<h1>Your HTML content here</h1>\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "http://localhost:3000/send-bulk-emails",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "3000",
+          "path": ["send-bulk-emails"]
+        }
+      }
+    }
+  ]
+}

@@ -31,21 +31,6 @@ function loadTemplate() {
   return fs.readFileSync(TEMPLATE_PATH, "utf8").replace(/\r?\n|\r/g, "");
 }
 
-function personalize(html, data = {}) {
-  const vars = {
-    Name:          data.name          || "there",
-    Company:       data.company       || "your company",
-    Role:          data.role          || "SDE-1",
-    CalendlyLink:  data.calendlyLink  || "https://calendar.google.com/calendar/u/0",
-    ResumeLink:    data.resumeLink    || "https://drive.google.com/file/d/1HgU4xXj6utzQQ3OtW9xyLcXGnTYfHvrR/view?usp=sharing",
-    YourEmail:     data.yourEmail     || EMAIL_USER || "sppathak1428@gmail.com",
-  };
-  let out = html;
-  for (const [k, v] of Object.entries(vars)) {
-    out = out.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), v);
-  }
-  return out;
-}
 
 function addTracking(html, email) {
   const enc = encodeURIComponent(email);
@@ -141,15 +126,7 @@ async function main() {
   let success = 0, failed = 0;
 
   for (const email of toSend) {
-    const userData = users.find(u => u.email === email) || {};
-    const html = addTracking(
-      personalize(template, {
-        name:    userData.name    || userData.fullName,
-        company: userData.company,
-        role:    userData.role    || userData.title,
-      }),
-      email
-    );
+    const html = addTracking(template, email);
 
     if (isDry) {
       console.log(`  [DRY] would send → ${email}`);

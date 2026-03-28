@@ -37,21 +37,12 @@ async function connectMongo() {
 		serverSelectionTimeoutMS: 20000,
 	});
 	await mongoClient.connect();
-	db = mongoClient.db();
+	db = mongoClient.db("Linkedin_scrape");
 	emailsCollection = db.collection("Emails");
 	alreadySentCollection = db.collection("AlreadySent");
 	return db;
 }
 
-function personalizeTemplate(html, variables) {
-	if (!html) return html;
-	let output = html;
-	for (const [key, value] of Object.entries(variables || {})) {
-		const regex = new RegExp(`\\{\\{${key}\\}\\}`, "g");
-		output = output.replace(regex, value != null ? String(value) : "");
-	}
-	return output;
-}
 
 async function retry(fn, { retries = 3, baseDelayMs = 500 }) {
 	let attempt = 0;
@@ -79,21 +70,18 @@ app.get("/health", async (req, res) => {
 
 // POST /send-email { to, subject, html, text, variables, trackId }
 app.post("/send-email", async (req, res) => {
-	const { to, subject, html, text, variables, trackId } = req.body || {};
+	const { to, subject, html, text, trackId } = req.body || {};
 	if (!to || !subject || (!html && !text)) {
 		return res.status(400).json({ error: "Missing required fields: to, subject, html|text" });
 	}
 	try {
 		await connectMongo();
 
-		const personalizedHtml = personalizeTemplate(html, variables);
-		const personalizedText = personalizeTemplate(text, variables);
-
 		const result = await retry(() => sendEmail({
 			to,
 			subject,
-			html: personalizedHtml,
-			text: personalizedText,
+			html,
+			text,
 		}), { retries: 3, baseDelayMs: 1000 });
 
 		if (trackId) {
@@ -114,7 +102,7 @@ app.post("/send-email", async (req, res) => {
 
 // POST /send-bulk-emails { bunchID, subject, htmlTemplate, textTemplate, defaultVariables }
 app.post("/send-bulk-emails", async (req, res) => {
-	const { bunchID, subject, htmlTemplate, textTemplate, defaultVariables } = req.body || {};
+	const { bunchID, subject, htmlTemplate, textTemplate } = req.body || {};
 	if (!bunchID || !subject || (!htmlTemplate && !textTemplate)) {
 		return res.status(400).json({ error: "Missing required fields: bunchID, subject, htmlTemplate|textTemplate" });
 	}
@@ -150,16 +138,12 @@ app.post("/send-bulk-emails", async (req, res) => {
 				continue;
 			}
 
-			const variables = { ...(defaultVariables || {}), ...(recipient.variables || {}), name: recipient.name, company: recipient.company };
-			const html = personalizeTemplate(htmlTemplate, variables);
-			const text = personalizeTemplate(textTemplate, variables);
-
 			try {
 				const info = await retry(() => sendEmail({
 					to: email,
 					subject,
-					html,
-					text,
+					html: htmlTemplate,
+					text: textTemplate,
 				}), { retries: 3, baseDelayMs: 1000 });
 
 				await alreadySentCollection.updateOne(
