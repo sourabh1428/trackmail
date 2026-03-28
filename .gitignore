@@ -67,3 +67,8 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# Scraper session + debug
+scraper/linkedin_context.json
+scraper/debug_*.png
+scraper/*.csv
