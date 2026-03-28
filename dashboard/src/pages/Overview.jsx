@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
 import api from "../api";
 import BunchSelector from "../components/BunchSelector";
@@ -23,7 +23,7 @@ export default function Overview() {
       .finally(() => setLoading(false));
   }, [bunchId]);
 
-  const chartData = (() => {
+  const chartData = useMemo(() => {
     const map = {};
     for (const e of events) {
       const day = e.sentAt ? new Date(e.sentAt).toLocaleDateString() : "unknown";
@@ -32,7 +32,7 @@ export default function Overview() {
       if (e.clicked) map[day].clicks++;
     }
     return Object.values(map).sort((a, b) => new Date(a.day) - new Date(b.day));
-  })();
+  }, [events]);
 
   return (
     <div className="space-y-6">
@@ -46,7 +46,7 @@ export default function Overview() {
           <StatCard label="Sent" value={stats.sent} color="blue" />
           <StatCard label="Opened" value={stats.opens} sub={`${stats.openRate}%`} color="green" />
           <StatCard label="Clicked" value={stats.clicks} sub={`${stats.clickRate}%`} color="yellow" />
-          <StatCard label="Came Back" value={stats.cameBack} color="purple" />
+          <StatCard label="Came Back" value={stats.cameBack} sub={`${stats.sent > 0 ? Math.round((stats.cameBack / stats.sent) * 100) : 0}%`} color="purple" />
         </div>
       )}
       {chartData.length > 0 && (

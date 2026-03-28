@@ -43,6 +43,14 @@ export default function Templates() {
     } finally { setCreating(false); }
   }
 
+  const handleActivated = async () => {
+    loadList();
+    try {
+      const res = await api.get("/api/templates/active");
+      setSelected(prev => prev ? { ...prev, isActive: true, html: res.data.html ?? "" } : null);
+    } catch (e) { console.error(e); }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -70,10 +78,15 @@ export default function Templates() {
           ))}
         </div>
         <div className="md:col-span-2 bg-slate-800 rounded-lg border border-slate-700 p-4">
+          {selected && !selected.isActive && !selected.html && (
+            <div className="mb-3 text-xs text-amber-400 bg-amber-900/20 rounded px-3 py-2">
+              HTML editing is only available for the active template. Set this template as active to edit its HTML.
+            </div>
+          )}
           <TemplateEditor
             template={selected}
             onSaved={loadList}
-            onActivated={() => { loadList(); if (selected) selectTemplate(selected); }}
+            onActivated={handleActivated}
             onDeleted={() => { setSelected(null); loadList(); }}
           />
         </div>
