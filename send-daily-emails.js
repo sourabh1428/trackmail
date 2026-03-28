@@ -6,15 +6,8 @@ const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
 
-const {
-  MONGODB_URI,
-  EMAIL_USER,
-  EMAIL_PASS,
-  BUNCH_ID, // optional override; defaults to today's DDMMYY
-  DRY_RUN,  // set to "true" to preview without sending
-} = process.env;
+const { MONGODB_URI, EMAIL_USER, EMAIL_PASS, BUNCH_ID, DRY_RUN } = process.env;
 
-// ── BunchID: DDMMYY (e.g. 280326 for 28 Mar 2026) ──────────────────────────
 function todayBunchID() {
   const now = new Date();
   const dd = String(now.getDate()).padStart(2, "0");
@@ -23,22 +16,31 @@ function todayBunchID() {
   return `${dd}${mm}${yy}`;
 }
 
-// ── Template helpers ─────────────────────────────────────────────────────────
 const TEMPLATE_PATH = path.join(__dirname, "test.html");
 const TRACKING_BASE = "https://test-open.sppathak1428.workers.dev";
 
-function loadTemplate() {
+function loadFallbackTemplate() {
   return fs.readFileSync(TEMPLATE_PATH, "utf8").replace(/\r?\n|\r/g, "");
 }
 
+async function loadActiveTemplate(db) {
+  try {
+    const tmpl = await db.collection("EmailTemplates").findOne({ isActive: true });
+    if (tmpl?.html) return tmpl.html.replace(/\r?\n|\r/g, "");
+  } catch (e) {
+    console.warn("[template] MongoDB template load failed, falling back to test.html:", e.message);
+  }
+  return loadFallbackTemplate();
+}
 
-function addTracking(html, email) {
+function addTracking(html, email, bunchId) {
   const enc = encodeURIComponent(email);
-  const pixel = `<img src="${TRACKING_BASE}/track-open?email=${enc}" width="1" height="1" style="position:absolute;left:-9999px;" alt="" />`;
+  const bid = encodeURIComponent(bunchId);
+  const pixel = `<img src="${TRACKING_BASE}/track-open?email=${enc}&bid=${bid}" width="1" height="1" style="position:absolute;left:-9999px;" alt="" />`;
 
   let out = html.replace(/<a\s+(?:[^>]*?\s+)?href=(['"])(.*?)\1/gi, (match, q, url) => {
     if (url.includes("/track-link") || url.startsWith("#") || url.startsWith("mailto:")) return match;
-    const tracked = `${TRACKING_BASE}/track-link?email=${enc}&url=${encodeURIComponent(url)}`;
+    const tracked = `${TRACKING_BASE}/track-link?email=${enc}&bid=${bid}&url=${encodeURIComponent(url)}`;
     return `<a href=${q}${tracked}${q}`;
   });
 
@@ -47,10 +49,13 @@ function addTracking(html, email) {
     : out + pixel;
 }
 
-// ── Retry helper ──────────────────────────────────────────────────────────────
+// Only retry transient errors; skip permanent 5xx SMTP failures
 async function retry(fn, retries = 3, baseMs = 5000) {
   for (let i = 0; i < retries; i++) {
-    try { return await fn(); } catch (e) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (e.responseCode >= 500 && e.responseCode < 600) throw e; // permanent failure — don't retry
       if (i === retries - 1) throw e;
       const wait = baseMs * Math.pow(2, i);
       console.log(`  ⏳ retry ${i + 1}/${retries} in ${wait}ms — ${e.message}`);
@@ -59,10 +64,11 @@ async function retry(fn, retries = 3, baseMs = 5000) {
   }
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 async function main() {
   const bunchID = BUNCH_ID || todayBunchID();
-  const isDry   = DRY_RUN === "true";
+  const isDry = DRY_RUN === "true";
 
   console.log(`\n📬 send-daily-emails`);
   console.log(`   bunchID : ${bunchID}`);
@@ -74,14 +80,12 @@ async function main() {
 
   const mongo = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
   await mongo.connect();
-  const db             = mongo.db("Linkedin_scrape");
-  const emailsColl     = db.collection("Emails");
+  const db = mongo.db("Linkedin_scrape");
+  const emailsColl = db.collection("Emails");
   const alreadySentCol = db.collection("AlreadySent");
 
-  // Ensure dedup index
   await alreadySentCol.createIndex({ email: 1 }, { unique: true }).catch(() => {});
 
-  // 1. Fetch today's recipients
   const users = await emailsColl.find({ bunch_id: bunchID }).toArray();
   console.log(`📋 Found ${users.length} recipients for bunch "${bunchID}"`);
 
@@ -91,8 +95,10 @@ async function main() {
     return;
   }
 
-  // 2. Filter valid & not-yet-sent (always include own address for verification)
-  const validEmails = [...new Set(users.map(u => u.email).filter(e => e && e.includes("@")))];
+  const validEmails = [...new Set(
+    users.map(u => u.email).filter(e => e && EMAIL_REGEX.test(e))
+  )];
+
   const sent = await alreadySentCol
     .find({ email: { $in: validEmails } })
     .project({ email: 1 })
@@ -108,7 +114,6 @@ async function main() {
     return;
   }
 
-  // 3. Build transporter
   const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 465,
@@ -118,15 +123,15 @@ async function main() {
     rateLimit: 20,
     rateDelta: 60000,
     auth: { user: EMAIL_USER, pass: EMAIL_PASS },
-    tls: { rejectUnauthorized: false },
+    // Note: no tls.rejectUnauthorized override — Nodemailer defaults are correct for smtp.gmail.com:465
   });
 
-  const template = loadTemplate();
-  const SUBJECT  = "Application for software engineering role";
+  const template = await loadActiveTemplate(db);
+  const SUBJECT = "Application for software engineering role";
   let success = 0, failed = 0;
 
   for (const email of toSend) {
-    const html = addTracking(template, email);
+    const html = addTracking(template, email, bunchID);
 
     if (isDry) {
       console.log(`  [DRY] would send → ${email}`);
@@ -139,7 +144,7 @@ async function main() {
 
       if (email !== EMAIL_USER) {
         await alreadySentCol.insertOne({ email, sentAt: new Date(), bunch_id: bunchID, subject: SUBJECT })
-          .catch(e => { if (e.code !== 11000) throw e; }); // ignore dup key
+          .catch(e => { if (e.code !== 11000) throw e; });
       }
 
       success++;
@@ -149,7 +154,6 @@ async function main() {
       console.error(`  ❌ ${email} — ${e.message}`);
     }
 
-    // Small delay to stay under Gmail rate limits
     await new Promise(r => setTimeout(r, 1200));
   }
 
