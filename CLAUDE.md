@@ -49,6 +49,50 @@ Two independent subsystems that share a MongoDB database (`Linkedin_scrape`):
 - Both routes support `{{variable}}` template substitution via `variables` / `defaultVariables` in the request body
 - `AlreadySent` dedup logic in `/send-bulk-emails` uses `bunch_id + email` upsert (not the unique-index approach used by the CLI script)
 
+**New API routes (server.js):**
+- `POST /auth/login` — public; accepts `{ password }`; returns JWT (7d)
+- `POST /track-event` — public; `x-track-secret` header; writes to `TrackingEvents`
+- `GET /api/bunches` — JWT; list bunches with sent count
+- `GET /api/stats?bunchId=X` — JWT; `{ sent, opens, clicks, cameBack, openRate, clickRate }`
+- `GET /api/events?bunchId=X` — JWT; per-recipient rows
+- `GET /api/templates` — JWT; list templates (no html)
+- `GET /api/templates/active` — JWT; active template with html
+- `POST /api/templates` — JWT; create `{ name, html }`
+- `PUT /api/templates/:id` — JWT; update name/html; 400 for invalid ObjectId
+- `DELETE /api/templates/:id` — JWT; rejects if isActive
+- `POST /api/templates/:id/activate` — JWT; bulkWrite activate
+- `POST /send-email` — JWT-protected
+- `POST /send-bulk-emails` — JWT-protected
+
+**New MongoDB collections:**
+- `TrackingEvents` — `{ email, event, bunch_id, timestamp, url?, ip? }` — indexes: `{ email, event }` + `{ bunch_id }`
+- `EmailTemplates` — `{ name, html, isActive, createdAt, updatedAt }` — unique partial index on `{ isActive: true }`
+
+**Cloudflare Worker (`worker/`):**
+- `worker/index.js` — handles `/track-open` (1x1 GIF + async POST /track-event) and `/track-link` (302 redirect + async POST)
+- Deploy with `wrangler`; set `EXPRESS_API_URL` and `TRACK_SECRET` as Worker secrets
+- `ctx.waitUntil()` ensures tracking is fire-and-forget (never blocks pixel/redirect)
+
+**React Dashboard (`dashboard/`):**
+- Stack: Vite + React 18 + Tailwind CSS + Recharts + React Router v6
+- `npm run dev` in `dashboard/` — dev server at localhost:5173; proxies `/api` and `/auth` to `VITE_API_URL`
+- `npm run build` — production build for Vercel
+- Pages: Login (`/login`), Overview (`/`), Recipients (`/recipients`), Templates (`/templates`)
+- Auth: JWT stored in `localStorage` as `trackmail_token`; response interceptor clears on 401
+- Set `VITE_API_URL` in `.env` (or Vercel env vars) to point to the deployed Express server
+- Update `vercel.json` rewrites with the actual backend URL before deploying
+
+**New env vars:**
+```
+DASHBOARD_PASSWORD=   # password for dashboard login
+JWT_SECRET=           # secret for signing JWTs
+TRACK_SECRET=         # shared secret between server and Cloudflare Worker
+DASHBOARD_ORIGIN=     # allowed CORS origin (e.g. https://your-dashboard.vercel.app)
+TRACKING_WORKER_URL=  # Cloudflare Worker base URL (e.g. https://trackmail-pixel.workers.dev)
+VITE_API_URL=         # Express API URL for dashboard (e.g. https://your-api.railway.app)
+EXPRESS_API_URL=      # (Worker) same as above, set as wrangler secret
+```
+
 **GitHub Actions (`.github/workflows/daily-pipeline.yml`)**
 - Runs daily at 12:00 PM UTC (5:30 PM IST): `scrape` job → `send` job (sequential, `needs: scrape`)
 - Manual trigger supports `dry_run` and `bunch_id` inputs
