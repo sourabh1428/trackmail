@@ -12,38 +12,35 @@ from config.settings import (
 )
 
 class LinkedInSearchPage(BasePage):
-    def __init__(self, page):
+    def __init__(self, page, mongo_client=None):
         super().__init__(page)
-        
-        # Initialize MongoDB connection using environment variable
-        mongodb_uri = os.getenv('MONGODB_URI')
-        if not mongodb_uri:
-            print("⚠️ Warning: MONGODB_URI environment variable not set. Using default connection.")
-            
-        try:
-            # Create synchronous MongoDB client
-            self.client = MongoClient(mongodb_uri)
-            # Test the connection
-            self.client.admin.command('ping')
-            print("✅ MongoDB connection successful")
-            
-            # Use environment variable for database and collection names
-            db_name = os.getenv('MONGODB_DATABASE', 'Linkedin_scrape')
-            collection_name = os.getenv('MONGODB_COLLECTION', 'Emails')
-            
-            self.db = self.client[db_name]
-            self.collection = self.db[collection_name]
-            print(f"📊 Using database: {db_name}, collection: {collection_name}")
-            
-        except Exception as e:
-            print(f"❌ MongoDB connection failed: {e}")
-            print("⚠️ Continuing without MongoDB. Data will only be saved to CSV.")
-            self.client = None
-            self.db = None
-            self.collection = None
-        
-        # Generate dynamic bunch ID in DDMMYY format
         self.bunch_id = datetime.now().strftime("%d%m%y")
+
+        if mongo_client is not None:
+            # Use the shared client passed in — do NOT create a new one
+            self.client = None  # not owned by this instance
+            _client = mongo_client
+        else:
+            # Fallback: create own client (for standalone use only)
+            mongodb_uri = os.getenv('MONGODB_URI')
+            if not mongodb_uri:
+                print("⚠️ Warning: MONGODB_URI not set.")
+            try:
+                self.client = MongoClient(mongodb_uri)
+                self.client.admin.command('ping')
+                print("✅ MongoDB connection successful (standalone)")
+                _client = self.client
+            except Exception as e:
+                print(f"❌ MongoDB connection failed: {e}")
+                self.client = None
+                self.collection = None
+                print(f"Generated bunch ID: {self.bunch_id}")
+                return
+
+        db_name = os.getenv('MONGODB_DATABASE', 'Linkedin_scrape')
+        collection_name = os.getenv('MONGODB_COLLECTION', 'Emails')
+        self.db = _client[db_name]
+        self.collection = self.db[collection_name]
         print(f"Generated bunch ID: {self.bunch_id}")
 
     def get_initials(self, email):
@@ -321,10 +318,9 @@ class LinkedInSearchPage(BasePage):
         return list(profiles)
 
     def __del__(self):
-        """Cleanup MongoDB connection"""
+        """Cleanup MongoDB connection only if we own it"""
         if hasattr(self, 'client') and self.client:
             try:
                 self.client.close()
-                print("🔒 MongoDB connection closed")
             except:
                 pass

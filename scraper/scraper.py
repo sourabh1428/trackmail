@@ -2,6 +2,7 @@ import os
 import random
 import time
 from dotenv import load_dotenv
+from pymongo import MongoClient as PyMongoClient
 
 # Load environment variables from .env file
 load_dotenv()
@@ -65,6 +66,17 @@ class LinkedInScraper:
 			print(f"✅ All {len(links)} tabs opened successfully!")
 			print("🔍 Starting round-robin scrolling across all tabs...")
 			
+			# Create ONE shared MongoDB client for the entire scrape session
+			mongodb_uri = os.getenv('MONGODB_URI')
+			shared_mongo = None
+			if mongodb_uri:
+				try:
+					shared_mongo = PyMongoClient(mongodb_uri)
+					shared_mongo.admin.command('ping')
+					print("✅ Shared MongoDB client created for scrape session")
+				except Exception as e:
+					print(f"⚠️ MongoDB connection failed: {e}. Data will only be saved to CSV.")
+
 			# Per-tab state
 			states = []
 			for page, link, tab_index in pages:
@@ -76,7 +88,8 @@ class LinkedInScraper:
 					"previous_height": None,
 					"no_data_count": 0,
 					"scroll_attempts": 0,
-					"done": False
+					"done": False,
+					"search_page": LinkedInSearchPage(page, shared_mongo),
 				})
 			
 			# Use configurable thresholds from settings
@@ -140,7 +153,7 @@ class LinkedInScraper:
 							for email in new_profiles:
 								print(f"🎯 Tab {tab_index}: EMAIL EXTRACTED: {email}")
 								# Save via LinkedInSearchPage helper for DB logic
-								LinkedInSearchPage(page).save_profile_to_mongodb(email)
+								s["search_page"].save_profile_to_mongodb(email)
 							# Reset no-data counter when new found
 							s["no_data_count"] = 0
 						else:
@@ -229,7 +242,13 @@ class LinkedInScraper:
 					context.close()
 				except Exception as e:
 					print(f"⚠️ Warning: Error closing main context: {e}")
-		
+				if shared_mongo:
+					try:
+						shared_mongo.close()
+						print("🔒 Shared MongoDB client closed")
+					except Exception as e:
+						print(f"⚠️ Error closing MongoDB client: {e}")
+
 		print(f"\n🎉 All tabs processed with concurrent scrolling! Total results: {sum(len(v) for v in results.values())} emails")
 		return results
 

@@ -1,3 +1,4 @@
+import os
 import random
 import time
 from .base_page import BasePage
@@ -59,7 +60,12 @@ class LinkedInLoginPage(BasePage):
         print("Loading LinkedIn login page...")
         self.page.goto("https://www.linkedin.com/login")
         self.page.wait_for_load_state("domcontentloaded")
-        
+        # Also wait for network idle so JS-rendered form inputs are present
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass  # continue even if networkidle times out
+
         # Add human-like behavior after page loads
         self.human_delay(1, 2)
         self.random_scroll()
@@ -69,23 +75,30 @@ class LinkedInLoginPage(BasePage):
         print("Attempting to login with human-like behavior...")
         
         # Wait for login form to be visible
-        try:
-            self.page.wait_for_selector("input#username", timeout=15000)
-            print("Username field found")
-        except Exception as e:
-            print(f"Could not find username field: {e}")
-            self.page.screenshot(path="debug_login_page.png")
-            print("Screenshot saved as debug_login_page.png")
-            raise
-        
+        # LinkedIn has changed the selector; try multiple options
+        username_selector = None
+        for sel in ["input#username", "input[name='session_key']", "input[autocomplete='username']", "input[autocomplete='email']", "input[type='email']", "input[type='text']", "input"]:
+            try:
+                self.page.wait_for_selector(sel, timeout=10000)
+                username_selector = sel
+                print(f"Username field found with selector: {sel}")
+                break
+            except Exception:
+                continue
+        if username_selector is None:
+            if os.getenv('DEBUG_SCREENSHOTS'):
+                self.page.screenshot(path="debug_login_page.png")
+                print("Screenshot saved as debug_login_page.png")
+            raise Exception("Could not find username field with any known selector")
+
         # Human-like behavior before filling credentials
         self.human_delay(1, 2)
         self.random_scroll()
-        
+
         # Fill username with human-like typing
         print("Typing username...")
-        self.human_mouse_movement("input#username")
-        self.human_type("input#username", username)
+        self.human_mouse_movement(username_selector)
+        self.human_type(username_selector, username)
         print("Username entered")
         
         # Human-like delay between fields
@@ -124,8 +137,9 @@ class LinkedInLoginPage(BasePage):
         print(f"Current URL after login: {current_url}")
         
         # Take a screenshot for debugging
-        self.page.screenshot(path="debug_after_login.png")
-        print("Screenshot saved as debug_after_login.png")
+        if os.getenv('DEBUG_SCREENSHOTS'):
+            self.page.screenshot(path="debug_after_login.png")
+            print("Screenshot saved as debug_after_login.png")
         
         # Check if we're on a security challenge page
         if "challenge" in current_url or "checkpoint" in current_url:
