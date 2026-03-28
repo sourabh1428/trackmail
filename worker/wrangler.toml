@@ -1,0 +1,7 @@
+name = "trackmail-pixel"
+main = "index.js"
+compatibility_date = "2024-01-01"
+
+# Set these as Worker secrets (never commit values):
+#   wrangler secret put EXPRESS_API_URL
+#   wrangler secret put TRACK_SECRET
