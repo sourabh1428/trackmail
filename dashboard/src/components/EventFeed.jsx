@@ -25,8 +25,8 @@ export default function EventFeed({ events = [] }) {
 
   return (
     <div className="space-y-2">
-      {last10.map((e, i) => (
-        <div key={i} className="flex items-center gap-3 bg-slate-800 rounded px-3 py-2 text-sm">
+      {last10.map((e) => (
+        <div key={`${e.email}-${e.event}-${e.sentAt}`} className="flex items-center gap-3 bg-slate-800 rounded px-3 py-2 text-sm">
           <span className={`px-2 py-0.5 rounded text-xs font-medium ${EVENT_COLORS[e.event] || "bg-slate-600 text-slate-300"}`}>
             {e.event}
           </span>

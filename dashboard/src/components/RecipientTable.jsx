@@ -29,6 +29,7 @@ export default function RecipientTable({ rows = [] }) {
     [...filtered].sort((a, b) => {
       const av = a[sortKey], bv = b[sortKey];
       if (typeof av === "boolean") return sortDir * (Number(av) - Number(bv));
+      if (typeof av === "string" && typeof bv === "string") return sortDir * av.localeCompare(bv);
       return sortDir * (new Date(av) - new Date(bv));
     }),
     [filtered, sortKey, sortDir]
@@ -66,8 +67,8 @@ export default function RecipientTable({ rows = [] }) {
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-700">
-            {pageRows.map((r, i) => (
-              <tr key={i} className="hover:bg-slate-800/50">
+            {pageRows.map((r) => (
+              <tr key={r.email} className="hover:bg-slate-800/50">
                 <td className="px-3 py-2 text-slate-300">{r.email}</td>
                 <td className="px-3 py-2 text-slate-400">{r.sentAt ? new Date(r.sentAt).toLocaleString() : "—"}</td>
                 <td className="px-3 py-2"><Badge value={r.opened} /></td>

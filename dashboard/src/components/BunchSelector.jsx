@@ -13,7 +13,7 @@ export default function BunchSelector({ value, onChange }) {
       })
       .catch(console.error)
       .finally(() => setLoading(false));
-  }, []);
+  }, [onChange]);
 
   if (loading) return <div className="text-slate-400 text-sm">Loading batches…</div>;
 

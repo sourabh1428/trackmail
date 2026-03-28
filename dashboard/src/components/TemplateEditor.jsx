@@ -1,10 +1,15 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import api from "../api";
 
 export default function TemplateEditor({ template, onSaved, onActivated, onDeleted }) {
   const [html, setHtml] = useState(template?.html || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    setHtml(template?.html || "");
+    setError("");
+  }, [template?._id]);
 
   async function save() {
     if (!template?._id) return;
@@ -64,7 +69,7 @@ export default function TemplateEditor({ template, onSaved, onActivated, onDelet
       />
       <iframe
         srcDoc={html}
-        sandbox="allow-same-origin"
+        sandbox=""
         title="Template preview"
         className="w-full h-64 rounded border border-slate-700 bg-white"
       />
