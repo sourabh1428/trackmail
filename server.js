@@ -121,16 +121,16 @@ app.post("/send-bulk-emails", async (req, res) => {
 	try {
 		await connectMongo();
 
-		// Get recipients by bunchID
-		const recipientsCursor = emailsCollection.find({ bunchID });
+		// Get recipients by bunch_id (DB field)
+		const recipientsCursor = emailsCollection.find({ bunch_id: bunchID });
 		const recipients = await recipientsCursor.toArray();
 
 		if (!recipients.length) {
 			return res.json({ ok: true, message: "No recipients found for bunchID", sent: 0 });
 		}
 
-		// Fetch AlreadySent map for this bunchID to skip duplicates
-		const alreadySentDocs = await alreadySentCollection.find({ bunchID }).toArray();
+		// Fetch AlreadySent map for this bunch to skip duplicates
+		const alreadySentDocs = await alreadySentCollection.find({ bunch_id: bunchID }).toArray();
 		const alreadySentSet = new Set(alreadySentDocs.map((d) => d.email));
 
 		let successCount = 0;
@@ -163,8 +163,8 @@ app.post("/send-bulk-emails", async (req, res) => {
 				}), { retries: 3, baseDelayMs: 1000 });
 
 				await alreadySentCollection.updateOne(
-					{ bunchID, email },
-					{ $set: { bunchID, email, subject, sentAt: new Date(), messageId: info.messageId } },
+					{ bunch_id: bunchID, email },
+					{ $set: { bunch_id: bunchID, email, subject, sentAt: new Date(), messageId: info.messageId } },
 					{ upsert: true }
 				);
 
