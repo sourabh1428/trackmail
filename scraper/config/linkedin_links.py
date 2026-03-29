@@ -2,11 +2,12 @@
 # Add your LinkedIn search URLs here to scrape multiple pages
 
 LINKEDIN_LINKS = [
-    # Example links - modify these with your own LinkedIn search URLs
-    
     # Software Engineering roles
     "https://www.linkedin.com/search/results/content/?keywords=hiring%20software%20engineer&origin=GLOBAL_SEARCH_HEADER&sortBy=%22date_posted%22",
-    "https://www.linkedin.com/search/results/content/?keywords=reactjs%20hiring&origin=SWITCH_SEARCH_VERTICAL&sid=5Lz"
+    "https://www.linkedin.com/search/results/content/?keywords=reactjs%20hiring&origin=SWITCH_SEARCH_VERTICAL&sid=5Lz",
+    "https://www.linkedin.com/search/results/content/?keywords=hiring+software+engineer&origin=FACETED_SEARCH",
+    "https://www.linkedin.com/search/results/content/?keywords=reactjs%20hiring&origin=FACETED_SEARCH&sortBy=%5B%22date_posted%22%5D",
+    "https://www.linkedin.com/search/results/content/?keywords=reactjs%20hiring&origin=FACETED_SEARCH&sortBy=%5B%22relevance%22%5D",
 ]
 
 # How to add your own links:
