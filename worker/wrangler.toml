@@ -1,4 +1,4 @@
-name = "trackmail-pixel"
+name = "test-open"
 main = "index.js"
 compatibility_date = "2024-09-23"   # Workflows require >= 2024-09-23
 

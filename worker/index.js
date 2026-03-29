@@ -100,7 +100,7 @@ export default {
     try {
       const reqUrl = new URL(request.url);
       const email = reqUrl.searchParams.get("email") || "";
-      const bid = reqUrl.searchParams.get("bid") || "";        // bunch_id from email send
+      const bid = reqUrl.searchParams.get("bid") || null;      // bunch_id from email send (optional)
       const userAgent = request.headers.get("User-Agent") || "Unknown";
       const clientIP = getClientIP(request);
       const browserInfo = getBrowserInfo(userAgent);
