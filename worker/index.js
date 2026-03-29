@@ -17,6 +17,19 @@ const PIXEL = new Uint8Array([
   0x44,0x01,0x00,0x3b,
 ]);
 
+async function writeToD1(env, { email, event, bunch_id, url, ip }) {
+  try {
+    await env.DB.prepare(
+      `INSERT INTO tracking_events (email, event, bunch_id, url, ip, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    )
+      .bind(email, event, bunch_id, url ?? null, ip ?? null, new Date().toISOString())
+      .run();
+  } catch {
+    /* silently drop — tracking loss acceptable */
+  }
+}
+
 async function postEvent(env, body) {
   const url = `${env.EXPRESS_API_URL}/track-event`;
   const options = {
@@ -42,8 +55,14 @@ export default {
     const email = searchParams.get("email") || "";
     const bid = searchParams.get("bid") || "";
 
+    const ip = request.headers.get("CF-Connecting-IP") || "";
+
     if (pathname === "/track-open") {
-      ctx.waitUntil(postEvent(env, { email, event: "open", bunch_id: bid }));
+      const payload = { email, event: "open", bunch_id: bid, ip };
+      ctx.waitUntil(Promise.all([
+        writeToD1(env, payload),
+        postEvent(env, payload),
+      ]));
       return new Response(PIXEL, {
         status: 200,
         headers: {
@@ -56,7 +75,11 @@ export default {
 
     if (pathname === "/track-link") {
       const targetUrl = searchParams.get("url") || "/";
-      ctx.waitUntil(postEvent(env, { email, event: "click", bunch_id: bid, url: targetUrl }));
+      const payload = { email, event: "click", bunch_id: bid, url: targetUrl, ip };
+      ctx.waitUntil(Promise.all([
+        writeToD1(env, payload),
+        postEvent(env, payload),
+      ]));
       return Response.redirect(targetUrl, 302);
     }
 

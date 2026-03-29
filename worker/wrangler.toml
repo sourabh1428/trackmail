@@ -2,6 +2,14 @@ name = "trackmail-pixel"
 main = "index.js"
 compatibility_date = "2024-01-01"
 
+# D1 database binding — tracking events (opens + clicks)
+# database_name must match the name you used when creating the D1 database
+# in the Cloudflare dashboard (run: wrangler d1 list  to check)
+[[d1_databases]]
+binding = "DB"
+database_name = "trackmail-events"
+database_id = "a056a24b-f3df-454e-9217-9d62d5cb4213"
+
 # Set these as Worker secrets (never commit values):
 #   wrangler secret put EXPRESS_API_URL
 #   wrangler secret put TRACK_SECRET
