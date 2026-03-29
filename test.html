@@ -4,69 +4,116 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+<meta name="color-scheme" content="light dark" />
+<meta name="supported-color-schemes" content="light dark" />
 <meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no" />
 <title>Sourabh Pathak</title>
 <style>
-  body { margin: 0; padding: 0; background-color: #f2f2f2; font-family: Georgia, 'Times New Roman', serif; }
-  a { color: #1a56db; text-decoration: underline; }
-  @media (max-width: 600px) {
-    .wrapper { padding: 16px !important; }
-    .card { padding: 28px 20px !important; }
+  :root { color-scheme: light dark; }
+
+  body {
+    margin: 0; padding: 0;
+    background-color: #ffffff;
+    color: #111111;
+  }
+
+  .email-body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    font-size: 15px;
+    line-height: 27px;
+    color: #111111;
+  }
+
+  .email-wrapper {
+    background-color: #ffffff;
+  }
+
+  .divider {
+    border-top: 1px solid #e0e0e0;
+  }
+
+  .sig-text {
+    color: #555555;
+  }
+
+  .sig-link {
+    color: #2563eb;
+    text-decoration: none;
+  }
+
+  .resume-btn {
+    display: inline-block;
+    padding: 11px 24px;
+    background-color: #111111;
+    color: #ffffff !important;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 6px;
+    letter-spacing: 0.2px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    body { background-color: #141414 !important; color: #e4e4e4 !important; }
+    .email-wrapper { background-color: #141414 !important; }
+    .email-body { color: #e4e4e4 !important; }
+    .divider { border-top-color: #2e2e2e !important; }
+    .sig-text { color: #999999 !important; }
+    .sig-link { color: #60a5fa !important; }
+    .resume-btn { background-color: #e4e4e4 !important; color: #111111 !important; }
   }
 </style>
 </head>
-<body style="margin:0; padding:0; background-color:#f2f2f2;">
-  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f2f2f2; padding: 32px 0;">
+<body>
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" class="email-wrapper">
     <tr>
-      <td align="center" class="wrapper" style="padding: 32px 16px;">
-
-        <table width="600" cellpadding="0" cellspacing="0" border="0" class="card" style="max-width:600px; background:#ffffff; border-radius:4px; padding:44px 48px; border-top: 3px solid #1a56db;">
+      <td align="center" style="padding: 48px 16px;">
+        <table width="540" cellpadding="0" cellspacing="0" border="0" style="max-width:540px; width:100%;">
           <tr>
-            <td style="font-family: Georgia, 'Times New Roman', serif; font-size:16px; line-height:28px; color:#222222;">
+            <td class="email-body">
 
-              <p style="margin:0 0 22px 0;">Hi,</p>
+              <p style="margin:0 0 22px 0;">Hi there, I found your email on LinkedIn.</p>
 
               <p style="margin:0 0 22px 0;">
-                My name is Sourabh — I'm a full-stack developer currently at <strong>MoEngage</strong> on the Solutions team, where I work closely with enterprise clients like Swiggy, JPMC, and LIC on integrations and tooling.
+                I'm a full-stack developer with 2 years of experience, currently at MoEngage on the Solutions team — building integrations and tooling for enterprise clients like Swiggy and JPMC.
               </p>
 
               <p style="margin:0 0 22px 0;">
-                Before this, I built <strong>Easibill</strong> — a SaaS invoicing platform for small businesses — from scratch. Handled everything from the backend architecture to the WhatsApp notification layer. That kind of end-to-end ownership is what I genuinely enjoy.
-              </p>
-
-              <p style="margin:0 0 22px 0;">
-                I'm exploring SDE-1 roles and thought your team looked like a good fit. My stack is mostly <strong>React, Node.js, MongoDB, and AWS</strong>, though I pick up new things quickly when the problem is interesting enough.
+                Before that I built Easibill end to end, a small invoicing SaaS for businesses, covering the backend, billing logic, and WhatsApp notifications. My stack is mostly React and Node.js.
               </p>
 
               <p style="margin:0 0 32px 0;">
-                I've attached my resume below — happy to jump on a quick call if anything looks relevant. No pressure either way.
+                I'm exploring SDE-1/ Full-stack / Frontend roles and thought it was worth reaching out. Resume is attached — happy to chat if anything looks relevant.
               </p>
 
-              <!-- Resume CTA -->
+              <!-- Resume button -->
               <table cellpadding="0" cellspacing="0" border="0" style="margin-bottom:36px;">
                 <tr>
-                  <td style="background-color:#1a56db; border-radius:3px;">
+                  <td>
                     <a href="https://drive.google.com/file/d/11kCloVzqQJvnMaFRKnC137dG7YsMgWml/view?usp=sharing"
                        target="_blank"
-                       style="display:inline-block; padding:12px 24px; font-family:Arial, sans-serif; font-size:14px; font-weight:600; color:#ffffff; text-decoration:none; letter-spacing:0.3px;">
+                       class="resume-btn">
                       View Resume →
                     </a>
                   </td>
                 </tr>
               </table>
 
-              <p style="margin:0 0 6px 0;">Thanks for your time,</p>
-              <p style="margin:0 0 22px 0; font-weight:bold;">Sourabh Pathak</p>
+              <p style="margin:0 0 4px 0;">Thanks,</p>
+              <p style="margin:0 0 28px 0; font-weight:600;">Sourabh</p>
 
               <!-- Signature -->
-              <table cellpadding="0" cellspacing="0" border="0" width="100%" style="border-top:1px solid #e8e8e8; padding-top:20px; margin-top:4px;">
+              <table width="100%" cellpadding="0" cellspacing="0" border="0" class="divider">
                 <tr>
-                  <td style="font-family: Arial, sans-serif; font-size:13px; color:#666666; line-height:22px;">
-                    <span>📞 +91 88391 43395</span><br/>
-                    <a href="https://www.linkedin.com/in/sourabh1428/" target="_blank" style="color:#1a56db;">linkedin.com/in/sourabh1428</a>
-                    &nbsp;·&nbsp;
-                    <a href="https://github.com/sourabh1428" target="_blank" style="color:#1a56db;">github.com/sourabh1428</a><br/>
-                    <span style="color:#999999;">Bengaluru, India</span>
+                  <td style="padding-top:18px;">
+                    <p style="margin:0; font-size:13px; line-height:22px;" class="sig-text">
+                      +91 88391 43395 &nbsp;·&nbsp;
+                      <a href="https://www.linkedin.com/in/sourabh1428/" target="_blank" class="sig-link">LinkedIn</a>
+                      &nbsp;·&nbsp;
+                      <a href="https://github.com/sourabh1428" target="_blank" class="sig-link">GitHub</a>
+                      &nbsp;·&nbsp; Bengaluru
+                    </p>
                   </td>
                 </tr>
               </table>
@@ -74,7 +121,6 @@
             </td>
           </tr>
         </table>
-
       </td>
     </tr>
   </table>

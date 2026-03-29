@@ -4,6 +4,7 @@ const nodemailer = require("nodemailer");
 const { MongoClient } = require("mongodb");
 const fs = require("fs");
 const path = require("path");
+const https = require("https");
 require("dotenv").config();
 
 const { MONGODB_URI, EMAIL_USER, EMAIL_PASS, BUNCH_ID, DRY_RUN } = process.env;
@@ -65,6 +66,24 @@ async function retry(fn, retries = 3, baseMs = 5000) {
 }
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const RESUME_DRIVE_ID = "11kCloVzqQJvnMaFRKnC137dG7YsMgWml";
+
+function downloadBuffer(url) {
+  return new Promise((resolve, reject) => {
+    const follow = (u) => https.get(u, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return follow(res.headers.location);
+      }
+      if (res.statusCode !== 200) return reject(new Error(`HTTP ${res.statusCode} fetching resume`));
+      const chunks = [];
+      res.on("data", c => chunks.push(c));
+      res.on("end", () => resolve(Buffer.concat(chunks)));
+      res.on("error", reject);
+    }).on("error", reject);
+    follow(url);
+  });
+}
+const BLOCKED_DOMAINS = ["gmail.com", "moengage.com"];
 
 async function main() {
   const bunchID = BUNCH_ID || todayBunchID();
@@ -97,7 +116,11 @@ async function main() {
     }
 
     const validEmails = [...new Set(
-      users.map(u => u.email).filter(e => e && EMAIL_REGEX.test(e))
+      users.map(u => u.email).filter(e => {
+        if (!e || !EMAIL_REGEX.test(e)) return false;
+        const domain = e.split("@")[1].toLowerCase();
+        return !BLOCKED_DOMAINS.includes(domain);
+      })
     )];
 
     const sent = await alreadySentCol
@@ -128,6 +151,13 @@ async function main() {
 
     const template = await loadActiveTemplate(db);
     const SUBJECT = "Application for software engineering role";
+
+    console.log("📎 Downloading resume...");
+    const resumeBuffer = await downloadBuffer(
+      `https://drive.google.com/uc?export=download&id=${RESUME_DRIVE_ID}`
+    );
+    console.log(`   resume size: ${(resumeBuffer.length / 1024).toFixed(1)} KB\n`);
+
     let success = 0, failed = 0;
 
     for (const email of toSend) {
@@ -140,7 +170,11 @@ async function main() {
       }
 
       try {
-        await retry(() => transporter.sendMail({ from: EMAIL_USER, to: email, subject: SUBJECT, html }));
+        const mailOptions = {
+          from: EMAIL_USER, to: email, subject: SUBJECT, html,
+          attachments: [{ filename: "Sourabh_Pathak_Resume.pdf", content: resumeBuffer, contentType: "application/pdf" }],
+        };
+        await retry(() => transporter.sendMail(mailOptions));
 
         if (email !== EMAIL_USER) {
           await alreadySentCol.insertOne({ email, sentAt: new Date(), bunch_id: bunchID, subject: SUBJECT })
