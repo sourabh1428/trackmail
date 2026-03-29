@@ -21,7 +21,7 @@ jobs:
   scrape:
     name: Scrape LinkedIn emails
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: scraper

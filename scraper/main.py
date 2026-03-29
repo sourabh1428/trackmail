@@ -1,4 +1,6 @@
 import os
+import subprocess
+import shutil
 import playwright.sync_api as p
 from playwright.sync_api import sync_playwright
 from scraper import LinkedInScraper
@@ -123,7 +125,18 @@ def main():
 				print(f"⚡ Processed {len(linkedin_links)} links SIMULTANEOUSLY using {max_workers} parallel workers")
 			else:
 				print("❌ No results obtained from any links")
-			
+
+			# Auto-trigger email send (local runs only — GHA handles this as a separate job)
+			if shutil.which("node"):
+				send_script = os.path.join(os.path.dirname(__file__), "..", "send-daily-emails.js")
+				send_script = os.path.abspath(send_script)
+				print(f"\n📧 Triggering email send: node {send_script}")
+				result = subprocess.run(["node", send_script], cwd=os.path.dirname(send_script))
+				if result.returncode != 0:
+					print(f"❌ Email send exited with code {result.returncode}")
+			else:
+				print("\nℹ️  Node.js not found — skipping auto-send (handled separately in CI)")
+
 			if keep_open:
 				print("\n🟢 Keeping the browser open for inspection. Press Enter here to close.")
 				try:

@@ -115,9 +115,16 @@ class LinkedInScraper:
 					print(f"⚠️ Tab {s['tab_index']}: Could not confirm results selector, continuing anyway")
 			time.sleep(2)  # Extra buffer for React render
 			
-			# Round-robin loop
+			# Round-robin loop — hard 15-minute wall clock limit
+			SCRAPE_DEADLINE = time.time() + 900
 			active = len(states)
 			while active > 0:
+				if time.time() > SCRAPE_DEADLINE:
+					print("⏰ 15-minute scrape limit reached — stopping all tabs")
+					for s in states:
+						if not s["done"]:
+							results[s["link"]] = list(s["profiles"])
+					break
 				for s in states:
 					if s["done"]:
 						continue
