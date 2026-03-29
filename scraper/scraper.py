@@ -62,7 +62,7 @@ class LinkedInScraper:
 					Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
 				""")
 				print(f"🌐 Tab {i+1}: Navigating to {link}")
-				page.goto(link, timeout=30000)
+				page.goto(link, timeout=60000, wait_until="domcontentloaded")
 				pages.append((page, link, i+1))
 			print(f"✅ All {len(links)} tabs opened successfully!")
 			print("🔍 Starting round-robin scrolling across all tabs...")
@@ -97,12 +97,23 @@ class LinkedInScraper:
 			from config.settings import ROUND_ROBIN_NO_DATA_THRESHOLD_ATTEMPTS as NO_DATA_THRESHOLD_ATTEMPTS
 			from config.settings import CONTENT_LOAD_WAIT_TIME
 			
-			# Initial wait for DOM
+			# Wait for DOM then wait for LinkedIn search results to actually render
+			print("⏳ Waiting for pages to render search results...")
 			for s in states:
 				try:
 					s["page"].wait_for_load_state("domcontentloaded", timeout=15000)
 				except Exception:
 					pass
+			for s in states:
+				try:
+					s["page"].wait_for_selector(
+						".scaffold-finite-scroll__content, .search-results-container, .reusable-search__result-container",
+						timeout=20000
+					)
+					print(f"✅ Tab {s['tab_index']}: Search results loaded")
+				except Exception:
+					print(f"⚠️ Tab {s['tab_index']}: Could not confirm results selector, continuing anyway")
+			time.sleep(2)  # Extra buffer for React render
 			
 			# Round-robin loop
 			active = len(states)
@@ -186,35 +197,36 @@ class LinkedInScraper:
 							
 							# More aggressive scrolling strategies when stuck
 							if s["scroll_attempts"] % 15 == 0:  # More frequent aggressive scrolling
-								# Try different scroll strategies
-								strategies = [
-									"window.scrollTo(0, document.body.scrollHeight)",  # Jump to bottom
-									"window.scrollTo(0, document.body.scrollHeight/2)",  # Jump to middle
-									"window.scrollTo(0, 0)",  # Jump to top
-									"window.scrollBy(0, 2000)",  # Large scroll down
-									"window.scrollBy(0, -1000)"  # Scroll up
-								]
-								strategy = random.choice(strategies)
-								page.evaluate(strategy)
-								time.sleep(random.uniform(0.8, 1.5))
-								
+								# Use keyboard End/PageDown which reliably triggers IntersectionObserver
+								page.keyboard.press("End")
+								time.sleep(random.uniform(1.5, 2.5))
+								page.keyboard.press("PageUp")
+								time.sleep(random.uniform(0.8, 1.2))
+								page.keyboard.press("End")
+								time.sleep(random.uniform(1.0, 1.5))
+
 							# Try to trigger lazy loading
 							if s["scroll_attempts"] % 25 == 0:
-								page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-								time.sleep(random.uniform(1.0, 2.0))
-								page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
-								time.sleep(random.uniform(0.5, 1.0))
+								page.keyboard.press("End")
+								time.sleep(random.uniform(2.0, 3.0))
+								page.mouse.wheel(0, -800)
+								time.sleep(random.uniform(1.0, 1.5))
 						else:
 							s["scroll_attempts"] = 0
 							s["previous_height"] = cur_h
 						
-						# Perform a variable scroll step based on attempts
-						scroll_amount = 800 if s["scroll_attempts"] < 50 else 1200  # Larger scrolls when stuck
-						page.evaluate(f"window.scrollBy(0, {scroll_amount})")
-						# Variable pause based on how stuck we are, with additional content load wait
-						base_pause = random.uniform(0.15, 0.3) if s["scroll_attempts"] < 30 else random.uniform(0.5, 1.0)
-						content_wait = CONTENT_LOAD_WAIT_TIME if s["no_data_count"] > 20 else 0.5  # Longer wait when struggling to find content
-						time.sleep(base_pause + content_wait)
+						# Scroll using mouse.wheel — fires real wheel events that trigger
+						# LinkedIn's IntersectionObserver-based infinite scroll
+						scroll_amount = 800 if s["scroll_attempts"] < 50 else 1200
+						try:
+							# Move mouse to the results area first so the wheel event lands there
+							page.mouse.move(760, 500)
+							page.mouse.wheel(0, scroll_amount)
+						except Exception:
+							page.evaluate(f"window.scrollBy(0, {scroll_amount})")
+						# Wait long enough for LinkedIn to fire the API call and render new results
+						wait_time = random.uniform(1.5, 2.5) if s["no_data_count"] < 30 else random.uniform(2.5, 3.5)
+						time.sleep(wait_time)
 						
 						# Safety: too many attempts
 						if s["scroll_attempts"] > MAX_SCROLL_ATTEMPTS or s["no_data_count"] > NO_DATA_THRESHOLD_ATTEMPTS:
@@ -223,10 +235,16 @@ class LinkedInScraper:
 							active -= 1
 							print(f"⚠️ Tab {tab_index}: Stopping due to low activity. Total: {len(profiles)}")
 					except Exception as e:
-						print(f"❌ Tab {tab_index}: Error during round-robin step: {e}")
-						s["done"] = True
-						results[link] = list(profiles)
-						active -= 1
+						err = str(e)
+						# Only give up on fatal page/navigation errors, not transient ones
+						if any(k in err for k in ("Target closed", "Session closed", "Navigation failed", "net::ERR")):
+							print(f"❌ Tab {tab_index}: Fatal error, stopping tab: {e}")
+							s["done"] = True
+							results[link] = list(profiles)
+							active -= 1
+						else:
+							print(f"⚠️ Tab {tab_index}: Transient error, continuing: {e}")
+							time.sleep(1)
 			
 		finally:
 			if keep_tabs_open:

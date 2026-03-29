@@ -24,9 +24,10 @@ SCROLL_DIRECTION_CHANGE_CHANCE = 0.3  # 30% chance to change scroll direction
 SCROLL_BOTTOM_BACK_FREQUENCY = 5  # Every Nth attempt, scroll to bottom and back
 
 # Round-robin parallel scroller stop conditions (for scrape_multiple_links)
-# Increase these if tabs stop due to "low activity" too soon
-ROUND_ROBIN_MAX_SCROLL_ATTEMPTS = 1000  # Increased from 600 to 1000 for much longer runs
-ROUND_ROBIN_NO_DATA_THRESHOLD_ATTEMPTS = 100  # Increased from 40 to 100 to be more persistent
+# With ~2s wait per iteration: 300 attempts ≈ 10 min max per tab
+ROUND_ROBIN_MAX_SCROLL_ATTEMPTS = 300
+# 50 consecutive no-data attempts × ~2s = ~100s of no results before giving up
+ROUND_ROBIN_NO_DATA_THRESHOLD_ATTEMPTS = 50
 
-# Additional wait time between scroll attempts to allow content to load
-CONTENT_LOAD_WAIT_TIME = 2.0  # Seconds to wait for content to load after scrolling
+# Post-scroll content load wait — kept for legacy smart_scroll_with_monitoring
+CONTENT_LOAD_WAIT_TIME = 2.0

@@ -72,3 +72,8 @@ node_modules/
 scraper/linkedin_context.json
 scraper/debug_*.png
 scraper/*.csv
+
+# Python bytecode
+**/__pycache__/
+**/*.pyc
+**/*.pyo

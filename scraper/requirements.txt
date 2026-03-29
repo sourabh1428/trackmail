@@ -1,4 +1,4 @@
-# Requirements for Python 3.12 compatibility
+# Build tools
 setuptools>=65.0.0
 wheel>=0.38.0
 
@@ -8,16 +8,3 @@ python-dotenv>=1.0.0
 
 # MongoDB driver (synchronous, works with Playwright)
 pymongo>=4.5.0
-
-# Basic utilities
-requests>=2.31.0
-urllib3>=2.0.0
-certifi>=2023.7.0
-
-# Data processing
-pandas>=2.0.0
-numpy>=1.24.0
-
-# Logging
-colorama>=0.4.6
-
