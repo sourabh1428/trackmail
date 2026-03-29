@@ -1,15 +1,20 @@
 name = "trackmail-pixel"
 main = "index.js"
-compatibility_date = "2024-01-01"
+compatibility_date = "2024-09-23"   # Workflows require >= 2024-09-23
 
-# D1 database binding — tracking events (opens + clicks)
-# database_name must match the name you used when creating the D1 database
-# in the Cloudflare dashboard (run: wrangler d1 list  to check)
+# D1 database — tracking events (opens + clicks)
+# Run `wrangler d1 list` to confirm the exact database_name
 [[d1_databases]]
 binding = "DB"
 database_name = "trackmail-events"
 database_id = "a056a24b-f3df-454e-9217-9d62d5cb4213"
 
-# Set these as Worker secrets (never commit values):
+# Cloudflare Workflow — durable D1 insert with automatic retries
+[[workflows]]
+name    = "tracking-workflow"
+binding = "TRACKING_WORKFLOW"
+class_name = "TrackingWorkflow"
+
+# Secrets (set via wrangler CLI, never commit values):
 #   wrangler secret put EXPRESS_API_URL
 #   wrangler secret put TRACK_SECRET
