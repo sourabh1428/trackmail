@@ -1,266 +1,238 @@
-# Trackmail — Bug Fixes + Analytics Dashboard
+# Trackmail — Bug Fixes + Analytics Dashboard (Claude Code Prompt)
 
-**Date:** 2026-03-28
-**Status:** Approved
-**Scope:** Production hardening of existing pipeline + React analytics dashboard with email template editor
+Read every file in the project before making any changes. Implement ALL of the following in order. Do not skip any item. After each section, commit with a descriptive message.
 
 ---
 
-## 1. Goals
+## PHASE 1: Bug Fixes (apply to existing files)
 
-1. Fix all critical and important issues identified in the pre-deployment code review.
-2. Add a React/Vite analytics dashboard (deployed to Vercel) showing emails sent, opened, clicked, and came back.
-3. Add a template editor in the dashboard so the active email HTML can be changed without touching the filesystem.
-4. Keep everything on free tiers: Render (Express), Vercel (React), MongoDB Atlas M0, Cloudflare Worker (existing).
-
----
-
-## 2. Bug Fixes
-
-### 2.1 `send-daily-emails.js`
+### 1.1 `send-daily-emails.js`
 - **Remove** `tls: { rejectUnauthorized: false }` from the Nodemailer transporter config. Gmail's cert is valid; Nodemailer defaults are correct for port 465.
 - **Strengthen email validation**: replace `e.includes("@")` with `/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)`.
-- **Skip permanent SMTP errors on retry**: check `error.responseCode`; do not retry `5xx` codes (e.g. 550 User unknown). Only retry on transient errors (4xx, network errors).
-- **Active template loading**: read the active template HTML from MongoDB `EmailTemplates` collection (field `isActive: true`). Fall back to `test.html` if no active template is set.
+- **Skip permanent SMTP errors on retry**: check `error.responseCode`; do NOT retry `5xx` codes (e.g. 550 User unknown). Only retry on transient errors (4xx, network errors).
+- **Active template loading**: read the active template HTML from MongoDB `EmailTemplates` collection (field `isActive: true`). Fall back to `test.html` on disk if no active template exists in MongoDB.
+- **Inject tracking URLs**: when building each email, rewrite all `<a href="...">` links to go through the Cloudflare Worker tracking URL: `https://<WORKER_URL>/track-link?email=<RECIPIENT>&url=<ORIGINAL_URL>&bid=<BUNCH_ID>`. Also inject a 1px tracking pixel before `</body>`: `<img src="https://<WORKER_URL>/track-open?email=<RECIPIENT>&bid=<BUNCH_ID>" width="1" height="1" style="display:none" />`. Use `TRACKING_WORKER_URL` env var for the worker base URL.
 
-### 2.2 `server.js`
+### 1.2 `server.js`
 - **Fail-fast on missing `MONGODB_URI`**: change `console.warn` to `throw new Error(...)` at startup.
 - **Graceful shutdown**: add `process.on('SIGTERM', ...)` and `process.on('SIGINT', ...)` handlers that call `mongoClient.close()`.
-- **Remove unused import**: remove `ObjectId` from the `mongodb` destructure.
+- **Remove unused import**: remove `ObjectId` from the `mongodb` destructure if present.
 - **Restrict CORS**: replace `cors()` with `cors({ origin: [process.env.DASHBOARD_ORIGIN, 'http://localhost:5173'] })`.
-- **JWT auth middleware**: protect all `/api/*` and `/send-*` routes. `POST /auth/login`, `POST /track-event`, and `GET /health` are public.
+- **JWT auth middleware**: protect all `/api/*` and `/send-*` routes. Keep `POST /track-event`, `POST /auth/login`, and `GET /health` public. Use `jsonwebtoken` package. Token is verified against `JWT_SECRET` env var.
+- **Add `POST /auth/login`**: accepts `{ password }`, compares against `DASHBOARD_PASSWORD` env var (plain string comparison is fine), returns `{ token }` (JWT, 7-day expiry).
+- **Add `POST /track-event`**: accepts `{ email, event, url?, bunch_id }` with `x-track-secret` header validated against `TRACK_SECRET` env var. Writes to MongoDB `TrackingEvents` collection.
+- **Add these dashboard API routes** (all JWT-protected):
+  - `GET /api/bunches` — list all distinct `bunch_id` values from `Emails` collection with sent counts, sorted newest first.
+  - `GET /api/stats?bunchId=X` — returns `{ sent, opens, clicks, comebacks, openRate, clickRate }`. "Comeback" = recipients with >1 click event for same bunch_id.
+  - `GET /api/events?bunchId=X` — per-recipient rows: `[{ email, sentAt, opened, clicked, cameBack }]`. Join `Emails`, `AlreadySent`, and `TrackingEvents`.
+  - `GET /api/templates` — list all templates from `EmailTemplates` collection (return name, isActive, createdAt, updatedAt — NOT the full html).
+  - `GET /api/templates/active` — return full HTML of the active template.
+  - `POST /api/templates` — create template `{ name, html }`, set `isActive: false`, timestamps.
+  - `PUT /api/templates/:id` — update name or html, set `updatedAt`.
+  - `DELETE /api/templates/:id` — delete, but reject if `isActive: true`.
+  - `POST /api/templates/:id/activate` — use MongoDB `bulkWrite`: first `updateMany` to set all `isActive: false`, then `updateOne` to set this doc `isActive: true`.
 
-### 2.3 `mailer.js`
-- **Startup credential verification**: call `transporter.verify()` at module load time (wrapped in try/catch that logs and exits if it fails).
+### 1.3 `mailer.js`
+- **Startup credential verification**: call `transporter.verify()` at module load time (wrapped in try/catch that logs and exits with `process.exit(1)` if it fails).
 
-### 2.4 `scraper/pages/search_page.py`
-- **Shared MongoClient**: remove `MongoClient` creation from `LinkedInSearchPage.__init__`. Accept a `mongo_client` argument passed in from `scraper.py`. `scraper.py` creates one client for the entire scrape session and closes it when done.
+### 1.4 `scraper/pages/search_page.py` (or wherever MongoClient is created in scraper)
+- **Shared MongoClient**: remove `MongoClient` creation from individual page classes. Accept a `mongo_client` argument passed in from the main scraper entry point. The entry point creates one client for the entire scrape session and closes it in a `finally` block.
 
-### 2.5 `scraper/pages/login_page.py`
+### 1.5 `scraper/pages/login_page.py`
 - **Conditional debug screenshots**: wrap all `page.screenshot(...)` calls in `if os.getenv('DEBUG_SCREENSHOTS'):`.
 
-### 2.6 `.gitignore`
-Add:
+### 1.6 `.gitignore`
+Add these lines if not already present:
 ```
 scraper/linkedin_context.json
 scraper/debug_*.png
 scraper/*.csv
 ```
 
-### 2.7 `package.json`
-Remove unused dependencies: `ioredis`, `redis`, `axios`.
+### 1.7 `package.json`
+- Remove unused dependencies: `ioredis`, `redis`, `axios` (only if they're listed and not actually imported anywhere in the codebase — verify before removing).
+- Add dependencies: `jsonwebtoken`, `bcryptjs` (if not already present).
 
 ---
 
-## 3. New MongoDB Collections
+## PHASE 2: MongoDB Collections Setup
 
-### `TrackingEvents`
-One document per tracking event.
-
-```js
-{
-  email: String,          // recipient email
-  event: String,          // "open" | "click" | "comeback"
-  url: String,            // populated for "click" events only
-  bunch_id: String,       // DDMMYY
-  timestamp: Date,
-  ip: String,             // optional, from CF-Connecting-IP header
-}
-```
-
-Index: `{ email: 1, event: 1 }` for fast per-recipient queries.
-
-**"Came back" definition:** A recipient "came back" if they have more than one `click` event for the same `bunch_id` (i.e. they clicked a tracked link more than once). This is computed as a query on `TrackingEvents` — no separate event type needed. No Cloudflare Worker changes required for this metric.
-
-### `EmailTemplates`
-One document per saved template.
-
-```js
-{
-  name: String,           // human label, e.g. "March batch v2"
-  html: String,           // full HTML string
-  isActive: Boolean,      // only one document has isActive: true at a time
-  createdAt: Date,
-  updatedAt: Date,
-}
-```
+Create a helper script `scripts/setup-indexes.js` that:
+1. Connects to MongoDB using `MONGODB_URI`
+2. Creates index `{ email: 1, event: 1 }` on `TrackingEvents`
+3. Creates unique index `{ isActive: 1 }` partial filter `{ isActive: true }` on `EmailTemplates` (ensures only one active template)
+4. Logs success and exits
 
 ---
 
-## 4. New & Updated API Endpoints
+## PHASE 3: Cloudflare Worker Update
 
-### Auth
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/auth/login` | None | `{ password }` → `{ token }` (JWT, 7-day expiry) |
+Read the existing Cloudflare Worker code (it handles `/track-open` and `/track-link` routes).
 
-Password is compared against `DASHBOARD_PASSWORD` env var (bcrypt hash optional, plain comparison acceptable for personal use).
-
-### Tracking (called by Cloudflare Worker)
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/track-event` | Shared secret (`TRACK_SECRET` header) | `{ email, event, url?, bunch_id }` → writes to `TrackingEvents` |
-
-### Dashboard API (JWT required)
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/bunches` | List of all `bunch_id` values with sent counts, newest first |
-| GET | `/api/stats?bunchId=X` | `{ sent, opens, clicks, comebacks, openRate, clickRate }` |
-| GET | `/api/events?bunchId=X` | Per-recipient rows: `[ { email, sentAt, opened, clicked, cameBack } ]` |
-| GET | `/api/templates` | List all templates (without full HTML) |
-| GET | `/api/templates/active` | Return full HTML of active template |
-| POST | `/api/templates` | Create template `{ name, html }` |
-| PUT | `/api/templates/:id` | Update name or html |
-| DELETE | `/api/templates/:id` | Delete (cannot delete active template) |
-| POST | `/api/templates/:id/activate` | Set `isActive: true`, unset all others atomically |
-
-### Existing endpoints updated
-- `POST /send-email` and `POST /send-bulk-emails`: now JWT-protected.
+Update it to:
+1. Parse `bid` (bunch_id) query param from tracking URLs in addition to existing params.
+2. After serving the tracking pixel (for opens) or redirect (for clicks), POST the event to the Express API:
+   ```
+   POST ${EXPRESS_API_URL}/track-event
+   Headers: { "Content-Type": "application/json", "x-track-secret": TRACK_SECRET }
+   Body: { "email": "...", "event": "open|click", "url": "..." (clicks only), "bunch_id": "..." }
+   ```
+3. Use `event.waitUntil(fetch(...))` so the tracking POST happens asynchronously — never block the pixel/redirect response.
+4. Retry once on network error or 5xx. If both fail, silently drop (tracking loss is acceptable, broken links are not).
+5. The Worker env vars needed: `EXPRESS_API_URL`, `TRACK_SECRET`.
 
 ---
 
-## 5. Cloudflare Worker Update
+## PHASE 4: React Dashboard
 
-Add a `notifyAPI` helper that `POST`s to `${EXPRESS_API_URL}/track-event` with:
-```json
-{ "email": "...", "event": "open|click|comeback", "url": "...", "bunch_id": "..." }
+Create a new `dashboard/` directory at the project root. Initialize with Vite + React:
+
 ```
-Header: `x-track-secret: <TRACK_SECRET>`.
-
-Retry once on failure (network error or 5xx from Render cold start). If both attempts fail, the Worker still serves the pixel/redirect — tracking loss is acceptable over broken email links.
-
-`bunch_id` is embedded in the tracking URL by `send-daily-emails.js` at send time:
+dashboard/
+  src/
+    pages/
+      Login.jsx
+      Overview.jsx
+      Recipients.jsx
+      Templates.jsx
+    components/
+      StatCard.jsx
+      EventFeed.jsx
+      RecipientTable.jsx
+      TemplateEditor.jsx
+      BunchSelector.jsx
+      Navbar.jsx
+    api.js
+    App.jsx
+    main.jsx
+  vite.config.js
+  vercel.json
+  tailwind.config.js
+  package.json
 ```
-/track-open?email=X&bid=DDMMYY
-/track-link?email=X&url=Y&bid=DDMMYY
-```
-
----
-
-## 6. React Dashboard
 
 ### Stack
 - React 18 + Vite
-- Tailwind CSS (utility styling, no component library)
-- Recharts (charts)
-- Axios (HTTP, with auth interceptor)
-- React Router v6 (routing)
+- Tailwind CSS (utility classes only, no component library)
+- Recharts (for charts)
+- Axios (HTTP client)
+- React Router v6
 
-### Folder structure
+### `api.js`
+- Create an Axios instance with `baseURL` from `import.meta.env.VITE_API_URL` or empty string (for Vercel rewrites).
+- Request interceptor: attach `Authorization: Bearer <token>` from `localStorage.getItem('trackmail_token')`.
+- Response interceptor: on 401, clear token from localStorage, redirect to `/login`.
+
+### `vite.config.js`
+- Proxy `/api` and `/auth` to `VITE_API_URL` env var in dev mode.
+
+### `vercel.json`
+```json
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "<VITE_API_URL>/api/:path*" },
+    { "source": "/auth/:path*", "destination": "<VITE_API_URL>/auth/:path*" }
+  ]
+}
 ```
-trackmail/
-  dashboard/
-    src/
-      pages/
-        Login.jsx
-        Overview.jsx
-        Recipients.jsx
-        Templates.jsx
-      components/
-        StatCard.jsx
-        EventFeed.jsx
-        RecipientTable.jsx
-        TemplateEditor.jsx
-        BunchSelector.jsx
-        Navbar.jsx
-      api.js            ← Axios instance; attaches Bearer token; redirects to /login on 401
-      App.jsx
-      main.jsx
-    vite.config.js      ← proxy /api and /auth to VITE_API_URL in dev
-    vercel.json         ← rewrite /api/* and /auth/* → Express on Render
-    package.json
-```
+Note: the actual URL will be set by the user — use a placeholder.
 
 ### Pages
 
-**`/login`**
-- Single password field + submit button
-- Calls `POST /auth/login`; stores JWT in `localStorage`
-- Redirects to `/` on success
+**Login (`/login`)**
+- Single password input + submit button
+- Calls `POST /auth/login` with `{ password }`
+- On success: stores JWT in `localStorage` as `trackmail_token`, redirects to `/`
+- On error: shows error message
+- Clean, centered card layout
 
-**`/` (Overview)**
-- Bunch ID dropdown (populated from `/api/bunches`)
-- 4 stat cards: Sent, Opened, Clicked, Came Back (with % rates)
-- Line chart: opens + clicks over time (by hour for single day, by day for all-time)
-- Recent activity feed: last 10 tracking events (email, event type, time ago)
+**Overview (`/`)**
+- Protected route (redirect to `/login` if no token)
+- `BunchSelector` dropdown at top — populated from `GET /api/bunches`
+- 4 `StatCard` components in a row: Sent, Opened (with %), Clicked (with %), Came Back (with %)
+- Data from `GET /api/stats?bunchId=X`
+- Line chart (Recharts `LineChart`): opens + clicks over time
+- `EventFeed` component: last 10 tracking events showing email, event type, relative time
 
-**`/recipients`**
-- Table: Email | Sent At | Opened | Clicked | Came Back
-- Status badge per row
-- Search by email, sort by any column
-- Paginated (50 rows/page)
+**Recipients (`/recipients`)**
+- Protected route
+- `BunchSelector` at top
+- `RecipientTable`: columns = Email, Sent At, Opened, Clicked, Came Back
+- Each boolean column shows a colored badge (green check / gray dash)
+- Search input to filter by email
+- Client-side sort by any column
+- Paginated at 50 rows/page
+- Data from `GET /api/events?bunchId=X`
 
-**`/templates`**
-- Left panel: list of saved templates; active one has a green badge
-- Right panel: HTML `<textarea>` editor + live preview in `<iframe srcdoc>`
-- Buttons: Save, Set as Active, Delete
-- "New template" button pre-fills editor with current `test.html` content
+**Templates (`/templates`)**
+- Protected route
+- Two-panel layout:
+  - **Left panel**: list of saved templates from `GET /api/templates`. Active template has a green "Active" badge. Click to select.
+  - **Right panel**: `TemplateEditor` component
+    - HTML `<textarea>` (full width, tall) showing selected template's HTML (fetched on select)
+    - Below textarea: live preview in `<iframe srcDoc={html} sandbox />` 
+    - Buttons: "Save" (`PUT /api/templates/:id`), "Set as Active" (`POST /api/templates/:id/activate`), "Delete" (`DELETE /api/templates/:id`)
+- "New Template" button: pre-fills textarea with the active template's HTML, prompts for name, creates via `POST /api/templates`
 
-### Auth flow
-- JWT stored in `localStorage` as `trackmail_token`
-- Axios interceptor adds `Authorization: Bearer <token>` to every request
-- On 401 response → clear token → redirect to `/login`
-- Protected route wrapper: redirect to `/login` if no token present
+### Navbar
+- Links: Overview, Recipients, Templates
+- Right side: "Logout" button (clears token, redirects to `/login`)
+- Highlight active route
 
----
-
-## 7. Deployment
-
-### Express API → Render
-- Service type: Web Service (free tier)
-- Build command: `npm ci --omit=dev`
-- Start command: `node server.js`
-- Health check path: `/health`
-- Env vars: `MONGODB_URI`, `EMAIL_USER`, `EMAIL_PASS`, `DASHBOARD_PASSWORD`, `JWT_SECRET`, `TRACK_SECRET`, `DASHBOARD_ORIGIN`
-
-### React Dashboard → Vercel
-- Root directory: `dashboard/`
-- Build command: `npm run build`
-- Output directory: `dist`
-- Env var: `VITE_API_URL=https://your-render-app.onrender.com`
-- `vercel.json` rewrites `/api/*` and `/auth/*` to `VITE_API_URL`
-
-### New required env vars summary
-```
-DASHBOARD_PASSWORD   password to log into the dashboard
-JWT_SECRET           long random string for signing JWTs
-TRACK_SECRET         shared secret between Cloudflare Worker and Express
-DASHBOARD_ORIGIN     Vercel URL (e.g. https://trackmail.vercel.app) for CORS
-```
+### Styling
+- Use Tailwind utility classes throughout
+- Dark-ish theme: slate/zinc backgrounds, white text, blue accents
+- Responsive: stack cards vertically on mobile
+- No component library — raw Tailwind only
 
 ---
 
-## 8. Data Flow (end-to-end)
+## PHASE 5: Environment Variables
+
+Update `.env.example` (create if it doesn't exist) with all required env vars:
 
 ```
-GitHub Actions (daily 12:00 UTC)
-  scrape job → LinkedIn → MongoDB Emails (bunch_id = DDMMYY)
-  send job   → send-daily-emails.js
-                 reads active template from MongoDB EmailTemplates
-                 injects tracking URLs (pixel + link rewrite with bid param)
-                 sends via Gmail SMTP → recipient inbox
+# Existing
+MONGODB_URI=
+EMAIL_USER=
+EMAIL_PASS=
+LINKEDIN_EMAIL=
+LINKEDIN_PASSWORD=
 
-Recipient opens email
-  → Cloudflare Worker /track-open?email=X&bid=DDMMYY
-  → Worker POSTs { email, event:"open", bunch_id } to Express /track-event
-  → Express writes to MongoDB TrackingEvents
-  → Worker returns 1px GIF
+# New — Server
+DASHBOARD_PASSWORD=
+JWT_SECRET=
+TRACK_SECRET=
+DASHBOARD_ORIGIN=
+TRACKING_WORKER_URL=
 
-Recipient clicks link
-  → Cloudflare Worker /track-link?email=X&url=Y&bid=DDMMYY
-  → Worker POSTs { email, event:"click", url, bunch_id } to Express /track-event
-  → Worker redirects browser to Y
+# New — Dashboard (Vite)
+VITE_API_URL=
 
-Dashboard user
-  → Vercel (React) → GET /api/stats?bunchId=X → Express → MongoDB aggregate
-  → Displays stats, recipient table, template editor
+# New — Cloudflare Worker
+EXPRESS_API_URL=
 ```
 
 ---
 
-## 9. Out of Scope
+## PHASE 6: Update the CLAUDE.md / skill docs
 
-- Reply detection (would require Gmail API integration)
-- Unsubscribe link (can be added later as a tracked link type)
-- Multi-user auth (single password is sufficient for personal use)
-- Render keep-warm cron (can be added later if cold starts cause tracking loss)
+After all changes are done, update any CLAUDE.md or project documentation to reflect:
+- New file structure (dashboard/, scripts/)
+- New MongoDB collections (TrackingEvents, EmailTemplates)
+- New API endpoints
+- New env vars
+- Updated data flow diagram
+
+---
+
+## IMPORTANT RULES
+
+1. Read every file you're about to modify BEFORE modifying it.
+2. Do NOT delete or bypass the AlreadySent dedup logic — it is critical.
+3. Preserve DRY_RUN mode in send-daily-emails.js.
+4. Use existing code style and patterns — match the project's conventions.
+5. Install new npm packages with `npm install`, not by hand-editing package.json.
+6. For the dashboard, run `npm create vite@latest dashboard -- --template react` then install tailwind, recharts, axios, react-router-dom.
+7. Test that `server.js` still starts correctly after all changes.
+8. Do NOT hardcode any secrets or URLs — everything comes from env vars.

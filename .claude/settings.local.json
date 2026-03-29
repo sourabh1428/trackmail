@@ -3,7 +3,26 @@
     "allow": [
       "Bash(ls:*)",
       "Bash(node -e \":*)",
-      "Bash(git:*)"
+      "Bash(git:*)",
+      "Bash(HEADLESS_MODE=false python main.py)",
+      "Bash(PYTHONIOENCODING=utf-8 HEADLESS_MODE=false python main.py)",
+      "Bash(npm uninstall:*)",
+      "Bash(npm install:*)",
+      "Bash(node -e \"require\\(''jsonwebtoken''\\); console.log\\(''jsonwebtoken installed OK''\\)\")",
+      "Bash(node -e \"require\\(''jest''\\); console.log\\(''jest installed OK''\\)\")",
+      "Bash(node -e \"require\\(''supertest''\\); console.log\\(''supertest installed OK''\\)\")",
+      "Bash(node -e \"try { require\\(''ioredis''\\); console.log\\(''ioredis PRESENT''\\); } catch\\(e\\) { console.log\\(''ioredis removed OK''\\); }\")",
+      "Bash(node -e \"try { require\\(''redis''\\); console.log\\(''redis PRESENT''\\); } catch\\(e\\) { console.log\\(''redis removed OK''\\); }\")",
+      "Bash(node -e \"try { require\\(''axios''\\); console.log\\(''axios PRESENT''\\); } catch\\(e\\) { console.log\\(''axios removed OK''\\); }\")",
+      "Bash(node:*)",
+      "Bash(rm -f \"/c/Users/spsou/Documents/trackmail/scraper/linkedin_context.json\")",
+      "Bash(PYTHONIOENCODING=utf-8 HEADLESS_MODE=false python -u main.py)",
+      "Bash(python -m py_compile scraper/scraper.py)",
+      "Bash(npx jest:*)",
+      "Bash(npm create:*)",
+      "Bash(npx tailwindcss:*)",
+      "Bash(cd:*)",
+      "Bash(npm run:*)"
     ]
   }
 }
