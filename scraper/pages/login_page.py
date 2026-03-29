@@ -122,9 +122,12 @@ class LinkedInLoginPage(BasePage):
         self.page.click("button[type='submit']")
         print("Login button clicked")
         
-        # Wait for navigation to complete with longer timeout
+        # Wait for URL to leave the login page — LinkedIn SPA never reaches
+        # "networkidle" (constant background requests), so waiting for it hangs
+        # for the full timeout every single time.
         try:
-            self.page.wait_for_load_state("networkidle", timeout=45000)
+            self.page.wait_for_url("**/linkedin.com/**", timeout=30000)
+            self.page.wait_for_load_state("domcontentloaded", timeout=10000)
             print("Page navigation completed")
         except Exception as e:
             print(f"Navigation timeout: {e}")

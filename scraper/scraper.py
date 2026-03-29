@@ -296,8 +296,8 @@ class LinkedInScraper:
 				context = load_context(self.browser, self.context_path)
 				# Test if the context is still valid by trying to access LinkedIn
 				page = context.new_page()
-				page.goto("https://www.linkedin.com/feed/", timeout=10000)
-				page.wait_for_timeout(2000)
+				page.goto("https://www.linkedin.com/feed/", timeout=30000)
+				page.wait_for_load_state("domcontentloaded", timeout=15000)
 				current_url = page.url
 				page.close()
 				
