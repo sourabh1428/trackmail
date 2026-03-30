@@ -17,8 +17,9 @@ function todayBunchID() {
   return `${dd}${mm}${yy}`;
 }
 
+const { addTracking } = require("./tracking");
+
 const TEMPLATE_PATH = path.join(__dirname, "test.html");
-const TRACKING_BASE = process.env.TRACKING_WORKER_URL || "https://test-open.sppathak1428.workers.dev";
 
 function loadFallbackTemplate() {
   return fs.readFileSync(TEMPLATE_PATH, "utf8").replace(/\r?\n|\r/g, "");
@@ -32,22 +33,6 @@ async function loadActiveTemplate(db) {
     console.warn("[template] MongoDB template load failed, falling back to test.html:", e.message);
   }
   return loadFallbackTemplate();
-}
-
-function addTracking(html, email, bunchId) {
-  const enc = encodeURIComponent(email);
-  const bid = encodeURIComponent(bunchId);
-  const pixel = `<img src="${TRACKING_BASE}/track-open?email=${enc}&bid=${bid}" width="1" height="1" style="position:absolute;left:-9999px;" alt="" />`;
-
-  let out = html.replace(/<a\s+(?:[^>]*?\s+)?href=(['"])(.*?)\1/gi, (match, q, url) => {
-    if (url.includes("/track-link") || url.startsWith("#") || url.startsWith("mailto:")) return match;
-    const tracked = `${TRACKING_BASE}/track-link?email=${enc}&bid=${bid}&url=${encodeURIComponent(url)}`;
-    return `<a href=${q}${tracked}${q}`;
-  });
-
-  return out.includes("</body>")
-    ? out.replace("</body>", `${pixel}</body>`)
-    : out + pixel;
 }
 
 // Only retry transient errors; skip permanent 5xx SMTP failures

@@ -26,31 +26,23 @@ router.get("/api/stats", async (req, res) => {
 
   try {
     const db = getDB();
+    const workerBase = process.env.TRACKING_WORKER_URL;
+    const trackSecret = process.env.TRACK_SECRET;
 
-    const trackingCollection = db.collection("TrackingEvents");
-    const aggregateMock = trackingCollection.aggregate([
-      { $match: { bunch_id: bunchId } },
-      { $group: { _id: { email: "$email", event: "$event" } } },
-      { $group: { _id: "$_id.event", count: { $sum: 1 } } },
-    ]);
-
-    const [sent, eventGroups, comebackData] = await Promise.all([
+    const [sent, workerRes] = await Promise.all([
       db.collection("AlreadySent").countDocuments({ bunch_id: bunchId }),
-      aggregateMock.toArray(),
-      trackingCollection.aggregate([
-        { $match: { bunch_id: bunchId, event: "click" } },
-        { $group: { _id: "$email", count: { $sum: 1 } } },
-        { $match: { count: { $gt: 1 } } },
-        { $count: "total" },
-      ]).toArray(),
+      fetch(`${workerBase}/d1/stats?bunch_id=${encodeURIComponent(bunchId)}`, {
+        headers: { "x-track-secret": trackSecret },
+      }),
     ]);
 
-    const eventMap = {};
-    for (const e of eventGroups) eventMap[e._id] = e.count;
+    if (!workerRes.ok) {
+      const text = await workerRes.text();
+      console.error("[api/stats] worker error:", workerRes.status, text);
+      return res.status(502).json({ error: "Failed to fetch tracking stats from worker" });
+    }
 
-    const opens = eventMap["open"] || 0;
-    const clicks = eventMap["click"] || 0;
-    const cameBack = comebackData[0]?.total || 0;
+    const { opens, clicks, cameBack } = await workerRes.json();
 
     return res.json({
       sent,
@@ -72,23 +64,32 @@ router.get("/api/events", async (req, res) => {
 
   try {
     const db = getDB();
+    const workerBase = process.env.TRACKING_WORKER_URL;
+    const trackSecret = process.env.TRACK_SECRET;
 
-    const [sentDocs, trackDocs] = await Promise.all([
+    const [sentDocs, workerRes] = await Promise.all([
       db.collection("AlreadySent")
         .find({ bunch_id: bunchId })
         .project({ email: 1, sentAt: 1, _id: 0 })
         .toArray(),
-      db.collection("TrackingEvents")
-        .find({ bunch_id: bunchId })
-        .project({ email: 1, event: 1, timestamp: 1, _id: 0 })
-        .toArray(),
+      fetch(`${workerBase}/d1/events?bunch_id=${encodeURIComponent(bunchId)}`, {
+        headers: { "x-track-secret": trackSecret },
+      }),
     ]);
+
+    if (!workerRes.ok) {
+      const text = await workerRes.text();
+      console.error("[api/events] worker error:", workerRes.status, text);
+      return res.status(502).json({ error: "Failed to fetch tracking events from worker" });
+    }
+
+    const trackRows = await workerRes.json(); // [{ email, event, timestamp, url }]
 
     const map = {};
     for (const s of sentDocs) {
       map[s.email] = { email: s.email, sentAt: s.sentAt, opened: false, clicked: false, clickCount: 0 };
     }
-    for (const t of trackDocs) {
+    for (const t of trackRows) {
       if (!map[t.email]) continue;
       if (t.event === "open") map[t.email].opened = true;
       if (t.event === "click") {

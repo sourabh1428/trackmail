@@ -188,6 +188,73 @@ export default {
         return Response.redirect(decodedLink, 302);
       }
 
+      // ── /d1/stats ────────────────────────────────────────────────────────────
+      if (reqUrl.pathname === "/d1/stats") {
+        const secret = request.headers.get("x-track-secret");
+        if (!secret || secret !== env.TRACK_SECRET) {
+          return new Response("Unauthorized", { status: 401, headers: CORS });
+        }
+
+        const bunchId = reqUrl.searchParams.get("bunch_id");
+        if (!bunchId) {
+          return new Response(JSON.stringify({ error: "bunch_id query param required" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...CORS },
+          });
+        }
+
+        // Distinct openers (each email counted once even if pixel loaded multiple times)
+        const opensResult = await env.DB.prepare(
+          `SELECT COUNT(DISTINCT email) AS opens FROM tracking_events WHERE bunch_id = ? AND event = 'open'`
+        ).bind(bunchId).first();
+
+        // Distinct clickers
+        const clicksResult = await env.DB.prepare(
+          `SELECT COUNT(DISTINCT email) AS clicks FROM tracking_events WHERE bunch_id = ? AND event = 'click'`
+        ).bind(bunchId).first();
+
+        // "Came back" = clicked more than once (distinct emails with click count > 1)
+        const cameBackResult = await env.DB.prepare(
+          `SELECT COUNT(*) AS came_back FROM (
+             SELECT email FROM tracking_events WHERE bunch_id = ? AND event = 'click'
+             GROUP BY email HAVING COUNT(*) > 1
+           )`
+        ).bind(bunchId).first();
+
+        return new Response(
+          JSON.stringify({
+            opens: opensResult?.opens ?? 0,
+            clicks: clicksResult?.clicks ?? 0,
+            cameBack: cameBackResult?.came_back ?? 0,
+          }),
+          { headers: { "Content-Type": "application/json", ...CORS } }
+        );
+      }
+
+      // ── /d1/events ───────────────────────────────────────────────────────────
+      if (reqUrl.pathname === "/d1/events") {
+        const secret = request.headers.get("x-track-secret");
+        if (!secret || secret !== env.TRACK_SECRET) {
+          return new Response("Unauthorized", { status: 401, headers: CORS });
+        }
+
+        const bunchId = reqUrl.searchParams.get("bunch_id");
+        if (!bunchId) {
+          return new Response(JSON.stringify({ error: "bunch_id query param required" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...CORS },
+          });
+        }
+
+        const { results } = await env.DB.prepare(
+          `SELECT email, event, timestamp, url FROM tracking_events WHERE bunch_id = ? ORDER BY timestamp ASC`
+        ).bind(bunchId).all();
+
+        return new Response(JSON.stringify(results ?? []), {
+          headers: { "Content-Type": "application/json", ...CORS },
+        });
+      }
+
       return new Response("Not Found", { status: 404, headers: CORS });
     } catch (error) {
       console.error("Tracking Worker Error:", error);

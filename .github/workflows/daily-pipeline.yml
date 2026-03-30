@@ -21,7 +21,7 @@ jobs:
   scrape:
     name: Scrape LinkedIn emails
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: scraper
@@ -52,7 +52,7 @@ jobs:
           MONGODB_COLLECTION: Emails
           HEADLESS_MODE:     true
           PYTHONUNBUFFERED:  1
-        run: python main.py
+        run: timeout 12m python main.py || true
 
   # ── Job 2: Send bulk emails (runs only after scrape succeeds) ──────────────
   send:

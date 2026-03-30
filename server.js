@@ -13,6 +13,7 @@ const morgan = require("morgan");
 const { connectDB, closeDB, getDB } = require("./db");
 const { sendEmail } = require("./mailer");
 const { verifyJWT } = require("./middleware/auth");
+const { addTracking } = require("./tracking");
 
 const app = express();
 
@@ -57,12 +58,13 @@ async function retryOnce(fn, { retries = 3, baseDelayMs = 500 } = {}) {
 
 // POST /send-email — JWT-protected
 app.post("/send-email", verifyJWT, async (req, res) => {
-  const { to, subject, html, text, trackId } = req.body || {};
+  const { to, subject, html, text, trackId, bunchId } = req.body || {};
   if (!to || !subject || (!html && !text)) {
     return res.status(400).json({ error: "Missing required fields: to, subject, html|text" });
   }
   try {
-    const result = await retryOnce(() => sendEmail({ to, subject, html, text }));
+    const trackedHtml = html && bunchId ? addTracking(html, to, bunchId) : html;
+    const result = await retryOnce(() => sendEmail({ to, subject, html: trackedHtml, text }));
     if (trackId) {
       await getDB().collection("AlreadySent").updateOne(
         { trackId },
@@ -109,7 +111,8 @@ app.post("/send-bulk-emails", verifyJWT, async (req, res) => {
         continue;
       }
       try {
-        const info = await retryOnce(() => sendEmail({ to: email, subject, html: htmlTemplate, text: textTemplate }));
+        const trackedHtml = htmlTemplate ? addTracking(htmlTemplate, email, bunchID) : undefined;
+        const info = await retryOnce(() => sendEmail({ to: email, subject, html: trackedHtml, text: textTemplate }));
         await db.collection("AlreadySent").updateOne(
           { bunch_id: bunchID, email },
           { $set: { bunch_id: bunchID, email, subject, sentAt: new Date(), messageId: info.messageId } },
