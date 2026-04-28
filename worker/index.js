@@ -255,6 +255,36 @@ export default {
         });
       }
 
+      // ── /d1/timeline ─────────────────────────────────────────────────────────
+      if (reqUrl.pathname === "/d1/timeline") {
+        const secret = request.headers.get("x-track-secret");
+        if (!secret || secret !== env.TRACK_SECRET) {
+          return new Response("Unauthorized", { status: 401, headers: CORS });
+        }
+
+        const bunchId = reqUrl.searchParams.get("bunch_id");
+        if (!bunchId) {
+          return new Response(JSON.stringify({ error: "bunch_id query param required" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...CORS },
+          });
+        }
+
+        const { results } = await env.DB.prepare(
+          `SELECT date(timestamp) AS date,
+                  SUM(CASE WHEN event = 'open' THEN 1 ELSE 0 END) AS opens,
+                  SUM(CASE WHEN event = 'click' THEN 1 ELSE 0 END) AS clicks
+           FROM tracking_events
+           WHERE bunch_id = ?
+           GROUP BY date(timestamp)
+           ORDER BY date ASC`
+        ).bind(bunchId).all();
+
+        return new Response(JSON.stringify(results ?? []), {
+          headers: { "Content-Type": "application/json", ...CORS },
+        });
+      }
+
       return new Response("Not Found", { status: 404, headers: CORS });
     } catch (error) {
       console.error("Tracking Worker Error:", error);

@@ -21,4 +21,12 @@ api.interceptors.response.use(
   }
 );
 
+export function getTimeline(bunchId) {
+  return api.get(`/api/timeline?bunchId=${bunchId}`).then((r) => r.data);
+}
+
+export function getDomains(bunchId) {
+  return api.get(`/api/domains?bunchId=${bunchId}`).then((r) => r.data);
+}
+
 export default api;

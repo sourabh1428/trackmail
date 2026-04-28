@@ -38,6 +38,24 @@ app.get("/health", async (req, res) => {
   }
 });
 
+// One-click unsubscribe — RFC 8058 compliant, no auth required
+app.get("/unsubscribe", async (req, res) => {
+  const { email } = req.query;
+  if (!email) return res.status(400).send("Missing email parameter.");
+  try {
+    await getDB().collection("Unsubscribed").updateOne(
+      { email },
+      { $setOnInsert: { email, createdAt: new Date() } },
+      { upsert: true }
+    );
+    console.log(`[unsubscribe] ${email}`);
+    return res.send("You have been unsubscribed. You will receive no further emails.");
+  } catch (e) {
+    console.error(`[unsubscribe] error=${e.message}`);
+    return res.status(500).send("Something went wrong. Please try again.");
+  }
+});
+
 // ── JWT-protected routes ──────────────────────────────────────────────────────
 // routes/stats.js and routes/templates.js each apply verifyJWT internally
 app.use("/", require("./routes/stats"));           // GET /api/bunches, /api/stats, /api/events
@@ -68,7 +86,7 @@ app.post("/send-email", verifyJWT, async (req, res) => {
     if (trackId) {
       await getDB().collection("AlreadySent").updateOne(
         { trackId },
-        { $set: { trackId, to, subject, sentAt: new Date(), messageId: result.messageId } },
+        { $set: { trackId, to, subject, sentAt: new Date(), messageId: result.messageId }, $setOnInsert: { createdAt: new Date() } },
         { upsert: true }
       );
     }
@@ -115,7 +133,7 @@ app.post("/send-bulk-emails", verifyJWT, async (req, res) => {
         const info = await retryOnce(() => sendEmail({ to: email, subject, html: trackedHtml, text: textTemplate }));
         await db.collection("AlreadySent").updateOne(
           { bunch_id: bunchID, email },
-          { $set: { bunch_id: bunchID, email, subject, sentAt: new Date(), messageId: info.messageId } },
+          { $set: { bunch_id: bunchID, email, subject, sentAt: new Date(), messageId: info.messageId }, $setOnInsert: { createdAt: new Date() } },
           { upsert: true }
         );
         successCount++;

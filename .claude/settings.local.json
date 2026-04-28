@@ -22,7 +22,16 @@
       "Bash(npm create:*)",
       "Bash(npx tailwindcss:*)",
       "Bash(cd:*)",
-      "Bash(npm run:*)"
+      "Bash(npm run:*)",
+      "Bash(python3:*)",
+      "Bash(HEADLESS_MODE=false PYTHONIOENCODING=utf-8 python main.py)",
+      "Bash(BUNCH_ID=070426 node:*)",
+      "Bash(DRY_RUN=true CHUNK_INDEX=0 CHUNK_SIZE=12 MAX_DAILY_SENDS=35 node *)",
+      "Bash(DRY_RUN=true CHUNK_INDEX=1 CHUNK_SIZE=12 MAX_DAILY_SENDS=35 node *)",
+      "Bash(DRY_RUN=true CHUNK_INDEX=0 CHUNK_SIZE=12 MAX_DAILY_SENDS=35 BUNCH_ID=260426 node *)",
+      "Bash(DRY_RUN=true CHUNK_INDEX=0 CHUNK_SIZE=12 MAX_DAILY_SENDS=35 BUNCH_ID=310326 node *)",
+      "Bash(DRY_RUN=true CHUNK_INDEX=0 CHUNK_SIZE=5 MAX_DAILY_SENDS=35 BUNCH_ID=test node *)",
+      "Bash(DRY_RUN=true CHUNK_INDEX=1 CHUNK_SIZE=12 MAX_DAILY_SENDS=35 BUNCH_ID=310326 node *)"
     ]
   }
 }

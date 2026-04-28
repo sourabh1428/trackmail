@@ -1,11 +1,12 @@
-name: Daily Pipeline — Scrape → Send Emails
+name: Daily Pipeline — Scrape + Chunked Send
 
 on:
-  # Runs every day at 12:00 PM UTC (5:30 PM IST)
   schedule:
-    - cron: "0 12 * * *"
+    - cron: "0 3 * * 1-5"   # scrape only      — 03:00 UTC = 08:30 IST, Mon–Fri
+    - cron: "3 4 * * 1-5"   # send chunk 0     — 04:03 UTC ≈ 09:33 IST
+    - cron: "7 8 * * 1-5"   # send chunk 1     — 08:07 UTC ≈ 13:37 IST
+    - cron: "2 11 * * 1-5"  # send chunk 2     — 11:02 UTC ≈ 16:32 IST
 
-  # Manual trigger with optional overrides
   workflow_dispatch:
     inputs:
       dry_run:
@@ -13,13 +14,18 @@ on:
         required: false
         default: "false"
       bunch_id:
-        description: "Override bunchID (leave blank for today's DDMMYY)"
+        description: "Override bunchID (DDMMYY, blank = today)"
         required: false
+      chunk_index:
+        description: "Chunk to send (0, 1, or 2)"
+        required: false
+        default: "0"
 
 jobs:
-  # ── Job 1: LinkedIn scraper ────────────────────────────────────────────────
+  # ── Scrape: runs once at 03:00 UTC so the bunch is ready before chunk 0 ──────
   scrape:
     name: Scrape LinkedIn emails
+    if: github.event.schedule == '0 3 * * 1-5'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -45,21 +51,25 @@ jobs:
 
       - name: Run scraper
         env:
-          LINKEDIN_EMAIL:    ${{ secrets.LINKEDIN_EMAIL }}
-          LINKEDIN_PASSWORD: ${{ secrets.LINKEDIN_PASSWORD }}
-          MONGODB_URI:       ${{ secrets.MONGODB_URI }}
-          MONGODB_DATABASE:  Linkedin_scrape
+          LINKEDIN_EMAIL:     ${{ secrets.LINKEDIN_EMAIL }}
+          LINKEDIN_PASSWORD:  ${{ secrets.LINKEDIN_PASSWORD }}
+          MONGODB_URI:        ${{ secrets.MONGODB_URI }}
+          MONGODB_DATABASE:   Linkedin_scrape
           MONGODB_COLLECTION: Emails
-          HEADLESS_MODE:     true
-          PYTHONUNBUFFERED:  1
+          HEADLESS_MODE:      true
+          PYTHONUNBUFFERED:   1
         run: timeout 12m python main.py || true
 
-  # ── Job 2: Send bulk emails (runs only after scrape succeeds) ──────────────
+  # ── Send: runs at each of the three send-window crons (or manual dispatch) ───
   send:
-    name: Send bulk emails
-    needs: scrape
+    name: Send email chunk
+    if: >
+      github.event.schedule == '3 4 * * 1-5'  ||
+      github.event.schedule == '7 8 * * 1-5'  ||
+      github.event.schedule == '2 11 * * 1-5' ||
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -74,11 +84,26 @@ jobs:
       - name: Install dependencies
         run: npm ci --omit=dev
 
-      - name: Send today's emails
+      - name: Resolve chunk index from trigger
+        id: chunk
+        run: |
+          case "${{ github.event.schedule }}" in
+            "3 4 * * 1-5")  echo "index=0" >> $GITHUB_OUTPUT ;;
+            "7 8 * * 1-5")  echo "index=1" >> $GITHUB_OUTPUT ;;
+            "2 11 * * 1-5") echo "index=2" >> $GITHUB_OUTPUT ;;
+            *)               echo "index=${{ inputs.chunk_index || '0' }}" >> $GITHUB_OUTPUT ;;
+          esac
+
+      - name: Send email chunk
         env:
-          MONGODB_URI: ${{ secrets.MONGODB_URI }}
-          EMAIL_USER:  ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS:  ${{ secrets.EMAIL_PASS }}
-          BUNCH_ID:    ${{ inputs.bunch_id || '' }}
-          DRY_RUN:     ${{ inputs.dry_run || 'false' }}
+          MONGODB_URI:       ${{ secrets.MONGODB_URI }}
+          EMAIL_USER:        ${{ secrets.EMAIL_USER }}
+          EMAIL_PASS:        ${{ secrets.EMAIL_PASS }}
+          BUNCH_ID:          ${{ inputs.bunch_id || '' }}
+          DRY_RUN:           ${{ inputs.dry_run || 'false' }}
+          CHUNK_INDEX:       ${{ steps.chunk.outputs.index }}
+          CHUNK_SIZE:        "12"
+          MAX_DAILY_SENDS:   "35"
+          SEND_DELAY_MIN_MS: "45000"
+          SEND_DELAY_MAX_MS: "90000"
         run: node send-daily-emails.js

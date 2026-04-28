@@ -1,29 +1,36 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import api from "../api";
-import BunchSelector from "../components/BunchSelector";
 import RecipientTable from "../components/RecipientTable";
 
 export default function Recipients() {
-  const [bunchId, setBunchId] = useState("");
   const [rows, setRows] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!bunchId) return;
-    setLoading(true);
-    api.get(`/api/events?bunchId=${bunchId}`)
-      .then(r => setRows(r.data))
-      .catch(console.error)
+    api
+      .get("/api/recipients")
+      .then((r) => setRows(r.data))
+      .catch((e) => setError(e.response?.data?.error || e.message))
       .finally(() => setLoading(false));
-  }, [bunchId]);
+  }, []);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-xl font-bold text-white">Recipients</h1>
-        <BunchSelector value={bunchId} onChange={setBunchId} />
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-xl font-semibold text-white">Recipients</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          Search, filter, and update your outreach pipeline across every batch.
+        </p>
       </div>
-      {loading ? <div className="text-slate-400 text-sm">Loading\u2026</div> : <RecipientTable rows={rows} />}
+
+      {error && <div className="rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">{error}</div>}
+
+      {loading ? (
+        <div className="rounded-lg border border-slate-800 bg-slate-900 p-8 text-slate-400">Loading recipients...</div>
+      ) : (
+        <RecipientTable rows={rows} />
+      )}
     </div>
   );
 }

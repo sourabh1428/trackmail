@@ -14,7 +14,7 @@ const TRACKING_BASE =
 function addTracking(html, email, bunchId) {
   const enc = encodeURIComponent(email);
   const bid = encodeURIComponent(bunchId);
-  const pixel = `<img src="${TRACKING_BASE}/track-open?email=${enc}&bid=${bid}" width="1" height="1" style="position:absolute;left:-9999px;" alt="" />`;
+  const pixel = `<img src="${TRACKING_BASE}/track-open?email=${enc}&bid=${bid}" width="1" height="1" border="0" alt="" />`;
 
   let out = html.replace(/<a\s+(?:[^>]*?\s+)?href=(['"])(.*?)\1/gi, (match, q, url) => {
     if (url.includes("/track-link") || url.startsWith("#") || url.startsWith("mailto:")) return match;

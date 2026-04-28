@@ -17,10 +17,21 @@ const transporter = nodemailer.createTransport({
 
 // transporter.verify() is called by server.js start() to fail fast on bad credentials
 
-async function sendEmail({ to, subject, text, html, attachments }) {
+const FROM_ADDRESS = EMAIL_USER ? `"Sourabh Pathak" <${EMAIL_USER}>` : EMAIL_USER;
+
+const DEFAULT_HEADERS = {
+  "List-Unsubscribe": `<mailto:${EMAIL_USER}?subject=unsubscribe>`,
+};
+
+async function sendEmail({ to, subject, text, html, attachments, headers, replyTo }) {
   if (!to) throw new Error("'to' is required");
   if (!subject) throw new Error("'subject' is required");
-  return transporter.sendMail({ from: EMAIL_USER, to, subject, text, html, attachments });
+  return transporter.sendMail({
+    from: FROM_ADDRESS,
+    replyTo: replyTo || EMAIL_USER,
+    to, subject, text, html, attachments,
+    headers: { ...DEFAULT_HEADERS, ...headers },
+  });
 }
 
 module.exports = { transporter, sendEmail };

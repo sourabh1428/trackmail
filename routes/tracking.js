@@ -23,6 +23,25 @@ router.post("/track-event", verifyTrackSecret, async (req, res) => {
     if (ip) doc.ip = ip;
 
     await getDB().collection("TrackingEvents").insertOne(doc);
+    const set = { updatedAt: doc.timestamp };
+    const inc = {};
+    if (event === "open") {
+      set.opened = true;
+      set.openedAt = doc.timestamp;
+      inc.openCount = 1;
+    }
+    if (event === "click") {
+      set.clicked = true;
+      set.clickedAt = doc.timestamp;
+      inc.clickCount = 1;
+    }
+    const alreadySent = getDB().collection("AlreadySent");
+    if (typeof alreadySent.updateOne === "function") {
+      await alreadySent.updateOne(
+        { email, bunch_id },
+        { $set: set, ...(Object.keys(inc).length ? { $inc: inc } : {}) }
+      );
+    }
     return res.json({ ok: true });
   } catch (e) {
     console.error("[track-event]", e.message);

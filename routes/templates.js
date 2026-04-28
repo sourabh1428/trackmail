@@ -36,6 +36,20 @@ router.get("/templates/active", async (req, res) => {
   }
 });
 
+router.get("/templates/:id", async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: "Invalid template id" });
+  }
+  try {
+    const tmpl = await getDB().collection("EmailTemplates").findOne({ _id: new ObjectId(req.params.id) });
+    if (!tmpl) return res.status(404).json({ error: "Template not found" });
+    return res.json(tmpl);
+  } catch (e) {
+    console.error("[api/templates/:id]", e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/templates — create
 router.post("/templates", async (req, res) => {
   const { name, html } = req.body || {};
