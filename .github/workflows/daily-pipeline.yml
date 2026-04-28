@@ -60,6 +60,14 @@ jobs:
           PYTHONUNBUFFERED:   1
         run: timeout 12m python main.py || true
 
+      - name: Upload screenshots on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scraper-screenshots
+          path: scraper/screenshots/
+          if-no-files-found: ignore
+
   # ── Send: runs at the three send-window crons OR after scrape on manual dispatch ──
   # needs: scrape so that workflow_dispatch waits for scrape to finish first.
   # On send-window crons scrape is skipped, so we allow 'skipped' as a valid result.

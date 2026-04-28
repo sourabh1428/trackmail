@@ -320,22 +320,35 @@ class LinkedInScraper:
 		
 		if not context_exists or not context_is_recent:
 			print("No valid saved context found. Logging in...")
-			# Human-like delay before starting login process
 			self.human_delay(2, 4)
-			# Create context with anti-detection measures
 			context = self.browser.new_context(
-				user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+				user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 				viewport={'width': 1920, 'height': 1080},
 				locale='en-US',
-				timezone_id='America/New_York'
+				timezone_id='America/New_York',
+				extra_http_headers={
+					'Accept-Language': 'en-US,en;q=0.9',
+					'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+					'sec-ch-ua': '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+					'sec-ch-ua-mobile': '?0',
+					'sec-ch-ua-platform': '"Windows"',
+				}
 			)
 			page = context.new_page()
-			# Stealth
-			page.add_init_script("""
-				Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-				Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
-				Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
-			""")
+			# Apply comprehensive stealth patches (covers webdriver flag, plugins,
+			# Chrome runtime, permissions API, WebGL, iframe contentWindow, etc.)
+			try:
+				from playwright_stealth import stealth_sync
+				stealth_sync(page)
+				print("✅ playwright-stealth applied")
+			except ImportError:
+				print("⚠️ playwright-stealth not installed — falling back to manual patches")
+				page.add_init_script("""
+					Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+					Object.defineProperty(navigator, 'plugins', { get: () => [1,2,3,4,5] });
+					Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
+					window.chrome = { runtime: {} };
+				""")
 			login_page = LinkedInLoginPage(page)
 			login_page.load()
 			self.human_delay(3, 6)

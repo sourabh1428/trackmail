@@ -56,17 +56,55 @@ class LinkedInLoginPage(BasePage):
         self.page.evaluate(f"window.scrollBy(0, {scroll_amount})")
         time.sleep(random.uniform(SCROLL_MIN_DELAY, SCROLL_MAX_DELAY))
     
+    def _screenshot(self, name="debug"):
+        """Always save a screenshot — used for CI artifact upload."""
+        try:
+            import os
+            os.makedirs("screenshots", exist_ok=True)
+            path = f"screenshots/{name}.png"
+            self.page.screenshot(path=path, full_page=True)
+            print(f"📸 Screenshot saved: {path}")
+        except Exception as e:
+            print(f"⚠️ Screenshot failed: {e}")
+
+    def _handle_cookie_consent(self):
+        """Accept LinkedIn's cookie-consent banner if it appears before the login form."""
+        consent_selectors = [
+            "button[action-type='ACCEPT']",
+            "button[data-tracking-control-name*='accept']",
+            "button[data-test-id*='accept']",
+            ".artdeco-global-alert button",
+            "button.accept-cookies",
+            "button:has-text('Accept')",
+            "button:has-text('Allow')",
+        ]
+        for sel in consent_selectors:
+            try:
+                btn = self.page.locator(sel)
+                if btn.count() > 0:
+                    print(f"🍪 Cookie consent detected ({sel}), accepting...")
+                    btn.first.click()
+                    self.page.wait_for_load_state("domcontentloaded", timeout=8000)
+                    print(f"   URL after consent: {self.page.url}")
+                    return
+            except Exception:
+                pass
+
     def load(self):
         print("Loading LinkedIn login page...")
-        self.page.goto("https://www.linkedin.com/login")
-        self.page.wait_for_load_state("domcontentloaded")
-        # Also wait for network idle so JS-rendered form inputs are present
+        self.page.goto("https://www.linkedin.com/login", wait_until="domcontentloaded")
         try:
             self.page.wait_for_load_state("networkidle", timeout=15000)
         except Exception:
-            pass  # continue even if networkidle times out
+            pass
 
-        # Add human-like behavior after page loads
+        print(f"   URL after load  : {self.page.url}")
+        print(f"   Page title      : {self.page.title()}")
+        self._screenshot("01_after_load")
+
+        # Accept cookie consent if LinkedIn shows it before the login form
+        self._handle_cookie_consent()
+
         self.human_delay(1, 2)
         self.random_scroll()
         print("Login page loaded")
@@ -74,22 +112,41 @@ class LinkedInLoginPage(BasePage):
     def login(self, username, password):
         print("Attempting to login with human-like behavior...")
         
-        # Wait for login form to be visible
-        # LinkedIn has changed the selector; try multiple options
+        print(f"   URL before form search : {self.page.url}")
+        print(f"   Page title             : {self.page.title()}")
+
+        # Re-handle cookie consent in case it appeared after load()
+        self._handle_cookie_consent()
+
         username_selector = None
-        for sel in ["input#username", "input[name='session_key']", "input[autocomplete='username']", "input[autocomplete='email']", "input[type='email']", "input[type='text']", "input"]:
+        for sel in [
+            "input#username",
+            "input[name='session_key']",
+            "input[autocomplete='username']",
+            "input[autocomplete='email']",
+            "input[type='email']",
+            "input[type='text']",
+            "input",
+        ]:
             try:
-                self.page.wait_for_selector(sel, timeout=10000)
+                self.page.wait_for_selector(sel, timeout=8000)
                 username_selector = sel
                 print(f"Username field found with selector: {sel}")
                 break
             except Exception:
                 continue
+
         if username_selector is None:
-            if os.getenv('DEBUG_SCREENSHOTS'):
-                self.page.screenshot(path="debug_login_page.png")
-                print("Screenshot saved as debug_login_page.png")
-            raise Exception("Could not find username field with any known selector")
+            self._screenshot("02_login_form_not_found")
+            # Log page source snippet to help diagnose what LinkedIn actually showed
+            try:
+                snippet = self.page.content()[:2000]
+                print(f"⚠️ Page source (first 2000 chars):\n{snippet}")
+            except Exception:
+                pass
+            raise Exception(
+                f"Could not find username field. URL={self.page.url} title='{self.page.title()}'"
+            )
 
         # Human-like behavior before filling credentials
         self.human_delay(1, 2)
@@ -139,10 +196,7 @@ class LinkedInLoginPage(BasePage):
         current_url = self.page.url
         print(f"Current URL after login: {current_url}")
         
-        # Take a screenshot for debugging
-        if os.getenv('DEBUG_SCREENSHOTS'):
-            self.page.screenshot(path="debug_after_login.png")
-            print("Screenshot saved as debug_after_login.png")
+        self._screenshot("03_after_login_click")
         
         # Check if we're on a security challenge page
         if "challenge" in current_url or "checkpoint" in current_url:
