@@ -49,6 +49,22 @@ jobs:
       - name: Install Playwright + Chromium
         run: python -m playwright install --with-deps chromium
 
+      # Restore the LinkedIn session saved from a local run.
+      # To set this up: base64-encode your linkedin_context.json and save as
+      # the LINKEDIN_CONTEXT repository secret (Settings → Secrets → Actions).
+      # Refresh it whenever LinkedIn invalidates the session (typically every few months).
+      - name: Restore LinkedIn session from secret
+        working-directory: scraper
+        env:
+          LINKEDIN_CONTEXT: ${{ secrets.LINKEDIN_CONTEXT }}
+        run: |
+          if [ -n "$LINKEDIN_CONTEXT" ]; then
+            echo "$LINKEDIN_CONTEXT" | base64 -d > linkedin_context.json
+            echo "✅ LinkedIn session restored ($(wc -c < linkedin_context.json) bytes)"
+          else
+            echo "⚠️  LINKEDIN_CONTEXT secret not set — will attempt fresh login (may hit verification)"
+          fi
+
       - name: Run scraper
         env:
           LINKEDIN_EMAIL:     ${{ secrets.LINKEDIN_EMAIL }}
@@ -60,7 +76,16 @@ jobs:
           PYTHONUNBUFFERED:   1
         run: timeout 12m python main.py || true
 
-      - name: Upload screenshots on failure
+      # Upload the refreshed session so you can update the secret if needed
+      - name: Upload refreshed LinkedIn session
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: linkedin-session
+          path: scraper/linkedin_context.json
+          if-no-files-found: ignore
+
+      - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:

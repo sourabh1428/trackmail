@@ -288,31 +288,25 @@ class LinkedInScraper:
 		"""
 		Ensure we have a valid LinkedIn context (login session)
 		"""
-		# Check if the context file exists and is recent (less than 24 hours old)
 		context_exists = os.path.exists(self.context_path)
-		context_is_recent = False
-		
+
 		if context_exists:
-			import time
 			context_age = time.time() - os.path.getmtime(self.context_path)
-			context_is_recent = context_age < 86400  # 24 hours in seconds
-			
-		if context_exists and context_is_recent:
-			print(f"Loading saved context from {self.context_path} (age: {context_age/3600:.1f} hours)")
+			print(f"Found saved context ({self.context_path}, age: {context_age/3600:.1f}h) — validating...")
 			try:
 				context = load_context(self.browser, self.context_path)
-				# Test if the context is still valid by trying to access LinkedIn
 				page = context.new_page()
 				page.goto("https://www.linkedin.com/feed/", timeout=30000)
 				page.wait_for_load_state("domcontentloaded", timeout=15000)
 				current_url = page.url
 				page.close()
-				
+
 				if "login" not in current_url and "checkpoint" not in current_url:
-					print("Saved session is still valid!")
+					print("✅ Saved session is valid — skipping login")
 					return context
 				else:
-					print("Saved session expired, need to login again")
+					print(f"⚠️  Session expired (redirected to {current_url}) — need fresh login")
+					context.close()
 					context_exists = False
 			except Exception as e:
 				print(f"Error loading saved context: {e}")
