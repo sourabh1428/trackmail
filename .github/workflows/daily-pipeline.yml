@@ -22,10 +22,10 @@ on:
         default: "0"
 
 jobs:
-  # ── Scrape: runs once at 03:00 UTC so the bunch is ready before chunk 0 ──────
+  # ── Scrape: runs on its cron AND on manual dispatch (so workflow_dispatch gets fresh data) ──
   scrape:
     name: Scrape LinkedIn emails
-    if: github.event.schedule == '0 3 * * 1-5'
+    if: github.event.schedule == '0 3 * * 1-5' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -60,14 +60,18 @@ jobs:
           PYTHONUNBUFFERED:   1
         run: timeout 12m python main.py || true
 
-  # ── Send: runs at each of the three send-window crons (or manual dispatch) ───
+  # ── Send: runs at the three send-window crons OR after scrape on manual dispatch ──
+  # needs: scrape so that workflow_dispatch waits for scrape to finish first.
+  # On send-window crons scrape is skipped, so we allow 'skipped' as a valid result.
   send:
     name: Send email chunk
+    needs: scrape
     if: >
-      github.event.schedule == '3 4 * * 1-5'  ||
-      github.event.schedule == '7 8 * * 1-5'  ||
-      github.event.schedule == '2 11 * * 1-5' ||
-      github.event_name == 'workflow_dispatch'
+      (needs.scrape.result == 'success' || needs.scrape.result == 'skipped') &&
+      (github.event.schedule == '3 4 * * 1-5'  ||
+       github.event.schedule == '7 8 * * 1-5'  ||
+       github.event.schedule == '2 11 * * 1-5' ||
+       github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
