@@ -4,25 +4,26 @@
  * evaluate-eligibility.js
  *
  * Reads today's scraped Emails documents (status == "scraped"), sends ALL of
- * them in a SINGLE Gemini API call with structured JSON output, and writes the
- * evaluations back to MongoDB (status → "evaluated").
+ * them in a SINGLE Groq API call with JSON mode, and writes the evaluations
+ * back to MongoDB (status → "evaluated").
  *
  * Env vars:
  *   MONGODB_URI        — required
- *   GEMINI_API_KEY     — required
+ *   GROQ_API_KEY       — required (free at console.groq.com, no credit card)
  *   BUNCH_ID           — optional override (DDMMYY); defaults to today
  *   EVAL_DRY_RUN=true  — log verdicts without writing to MongoDB
  */
 
 const { MongoClient } = require("mongodb");
-const { GoogleGenAI } = require("@google/genai");
+const Groq = require("groq-sdk");
 require("dotenv").config();
 
-const { MONGODB_URI, GEMINI_API_KEY, BUNCH_ID, EVAL_DRY_RUN } = process.env;
+const { MONGODB_URI, GROQ_API_KEY, BUNCH_ID, EVAL_DRY_RUN } = process.env;
 
 const isDryRun = EVAL_DRY_RUN === "true";
 
-const MODEL = "gemini-2.0-flash";
+// llama-3.3-70b-versatile: free tier, excellent at structured JSON, 128K context
+const MODEL = "llama-3.3-70b-versatile";
 
 // Truncate post_text per doc to keep the prompt within token limits
 const POST_TEXT_LIMIT = 600;
@@ -38,24 +39,6 @@ Core stack: React, TypeScript, Node.js, PostgreSQL, MongoDB, REST APIs.
 Location: Bengaluru, India. Open to remote or hybrid roles based in India.
 Target roles: SDE-1, Frontend Engineer, Full-Stack Engineer.
 `.trim();
-
-// ─── Response schema (array of evaluations) ──────────────────────────────────
-
-const RESPONSE_SCHEMA = {
-  type: "array",
-  items: {
-    type: "object",
-    properties: {
-      email: { type: "string" },
-      score: { type: "number", description: "Reply probability 0.0–1.0" },
-      verdict: { type: "string", enum: ["send", "skip"] },
-      reasoning: { type: "string" },
-      matched_keywords: { type: "array", items: { type: "string" } },
-      personalization_hook: { type: "string" },
-    },
-    required: ["email", "score", "verdict", "reasoning", "matched_keywords", "personalization_hook"],
-  },
-};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -100,48 +83,57 @@ ${MY_PROFILE}
 ## Posts to evaluate
 ${entries.join("\n\n")}
 
-## Output
-Return a JSON array with one object per entry (same order). Each object:
-- email: the email address from the entry (copy exactly)
-- score: float 0.0–1.0 (fit probability)
-- verdict: "send" if score >= 0.7, else "skip"
-- reasoning: one sentence
-- matched_keywords: array of terms from the post matching the candidate's stack
-- personalization_hook: if verdict="send", a 1–2 sentence personalised opener referencing something specific from the post; otherwise ""`;
+## Output format
+Return ONLY a valid JSON array with one object per entry (same order as input). Each object must have exactly these fields:
+- "email": string — copy the email address exactly as given
+- "score": number — float 0.0–1.0 (fit probability)
+- "verdict": string — "send" if score >= 0.7, else "skip"
+- "reasoning": string — one sentence
+- "matched_keywords": array of strings — terms from the post matching the candidate's stack
+- "personalization_hook": string — if verdict is "send", a 1–2 sentence personalised opener referencing something specific from the post; otherwise ""
+
+Example: [{"email":"a@b.com","score":0.85,"verdict":"send","reasoning":"...","matched_keywords":["React"],"personalization_hook":"..."}]`;
 }
 
-async function callGemini(genai, prompt, retries = 3, baseMs = 5000) {
+async function callGroq(client, prompt, retries = 3, baseMs = 5000) {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const response = await genai.models.generateContent({
+      const response = await client.chat.completions.create({
         model: MODEL,
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: RESPONSE_SCHEMA,
-          temperature: 0.2,
-        },
+        messages: [{ role: "user", content: prompt }],
+        response_format: { type: "json_object" },
+        temperature: 0.2,
+        max_tokens: 4096,
       });
 
-      const raw = response.text;
-      if (!raw) throw new Error("Empty response from Gemini");
+      const raw = response.choices[0]?.message?.content;
+      if (!raw) throw new Error("Empty response from Groq");
 
       const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) throw new Error("Expected JSON array from Gemini");
-      return parsed;
+
+      // Groq json_object mode may wrap the array in a key — unwrap if needed
+      const results = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed.results)
+        ? parsed.results
+        : Array.isArray(parsed.evaluations)
+        ? parsed.evaluations
+        : null;
+
+      if (!results) throw new Error(`Expected JSON array from Groq, got: ${JSON.stringify(parsed).slice(0, 200)}`);
+      return results;
     } catch (e) {
       const isRateLimit =
-        e.message?.includes("429") ||
-        e.message?.includes("503") ||
+        e.status === 429 ||
+        e.status === 503 ||
         e.message?.toLowerCase().includes("rate") ||
-        e.message?.toLowerCase().includes("quota") ||
-        e.message?.toLowerCase().includes("unavailable");
+        e.message?.toLowerCase().includes("quota");
 
       if (attempt < retries - 1) {
         const wait = isRateLimit
           ? baseMs * Math.pow(2, attempt) + 10000
           : baseMs * Math.pow(2, attempt);
-        console.warn(`  ⚠️  Gemini error (attempt ${attempt + 1}/${retries}): ${e.message} — retrying in ${(wait / 1000).toFixed(1)}s`);
+        console.warn(`  ⚠️  Groq error (attempt ${attempt + 1}/${retries}): ${e.message} — retrying in ${(wait / 1000).toFixed(1)}s`);
         await sleep(wait);
       } else {
         throw e;
@@ -161,12 +153,12 @@ async function main() {
   console.log(`   dry-run : ${isDryRun}\n`);
 
   if (!MONGODB_URI) throw new Error("MONGODB_URI is not set");
-  if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set");
+  if (!GROQ_API_KEY) throw new Error("GROQ_API_KEY is not set");
 
   const mongo = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
   await mongo.connect();
 
-  const genai = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+  const groq = new Groq.default({ apiKey: GROQ_API_KEY });
 
   try {
     const db = mongo.db("Linkedin_scrape");
@@ -216,10 +208,10 @@ async function main() {
       return;
     }
 
-    // Single Gemini call for all docs
-    console.log(`🤖 Sending ${withText.length} posts to Gemini in one request...`);
+    // Single Groq call for all docs
+    console.log(`🤖 Sending ${withText.length} posts to Groq (${MODEL}) in one request...`);
     const prompt = buildBatchPrompt(withText);
-    const results = await callGemini(genai, prompt);
+    const results = await callGroq(groq, prompt);
 
     console.log(`✅ Got ${results.length} evaluations back\n`);
 

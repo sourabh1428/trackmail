@@ -36,7 +36,9 @@
       "Bash(python -m py_compile scraper/pages/search_page.py)",
       "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d['dependencies'].get\\('@google/genai', 'NOT FOUND'\\)\\)\")",
       "Bash(EVAL_DRY_RUN=true BUNCH_ID=290426 node evaluate-eligibility.js)",
-      "Bash(BUNCH_ID=290426 node evaluate-eligibility.js)"
+      "Bash(BUNCH_ID=290426 node evaluate-eligibility.js)",
+      "Skill(claude-api)",
+      "WebSearch"
     ]
   }
 }

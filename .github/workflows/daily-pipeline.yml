@@ -94,7 +94,7 @@ jobs:
           if-no-files-found: ignore
 
   # ── Evaluate: runs after scrape (on scrape-cron or manual dispatch) ──
-  # Calls Gemini to score each scraped doc and set status="evaluated".
+  # Calls Groq (free tier) to score each scraped doc and set status="evaluated".
   evaluate:
     name: Evaluate eligibility (LLM)
     needs: scrape
@@ -120,7 +120,7 @@ jobs:
       - name: Run eligibility evaluator
         env:
           MONGODB_URI:     ${{ secrets.MONGODB_URI }}
-          GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
           BUNCH_ID:        ${{ inputs.bunch_id || '' }}
         run: node evaluate-eligibility.js
 

@@ -27,7 +27,7 @@ npm run dev             # nodemon with auto-reload
 docker build -t trackmail . && docker run --env-file .env trackmail
 ```
 
-**Required env vars:** `MONGODB_URI`, `EMAIL_USER`, `EMAIL_PASS` (Gmail App Password), `LINKEDIN_EMAIL`, `LINKEDIN_PASSWORD`, `GEMINI_API_KEY`
+**Required env vars:** `MONGODB_URI`, `EMAIL_USER`, `EMAIL_PASS` (Gmail App Password), `LINKEDIN_EMAIL`, `LINKEDIN_PASSWORD`, `GROQ_API_KEY`
 
 ## Architecture
 
@@ -109,7 +109,7 @@ DASHBOARD_ORIGIN=     # allowed CORS origin (e.g. https://your-dashboard.vercel.
 TRACKING_WORKER_URL=  # Cloudflare Worker base URL (e.g. https://trackmail-pixel.workers.dev)
 VITE_API_URL=         # Express API URL for dashboard (e.g. https://your-api.railway.app)
 EXPRESS_API_URL=      # (Worker) same as above, set as wrangler secret
-GEMINI_API_KEY=       # Google AI Studio API key for evaluate-eligibility.js
+GROQ_API_KEY=         # Groq API key for evaluate-eligibility.js (free at console.groq.com)
 ```
 
 **GitHub Actions (`.github/workflows/daily-pipeline.yml`)**
@@ -128,4 +128,4 @@ GEMINI_API_KEY=       # Google AI Studio API key for evaluate-eligibility.js
 - The email template (`test.html`) must remain a single line after loading — `loadTemplate()` strips all newlines before use
 - `Emails` doc status lifecycle: `"scraped"` (written by Python scraper) → `"evaluated"` (written by evaluator) → `"sent"` | `"skipped"` (written by sender)
 - The only placeholder in `test.html` body is `{{PersonalizationHook}}`; never add `{{Name}}`, `{{Company}}`, etc.
-- Evaluator Gemini model: `gemini-2.5-flash-lite-preview-06-17`; 15 RPM limit; 3 retries with exponential backoff on 429s; docs missing `post_text` are auto-skipped with score 0
+- Evaluator Groq model: `llama-3.3-70b-versatile`; JSON mode via `response_format: {type: "json_object"}`; 3 retries with exponential backoff on 429s; docs missing `post_text` are auto-skipped with score 0; Groq is free (1,000 req/day, no credit card) at console.groq.com
