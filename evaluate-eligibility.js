@@ -3,9 +3,9 @@
 /**
  * evaluate-eligibility.js
  *
- * Reads today's scraped Emails documents (status == "scraped"), calls Gemini
- * 2.5 Flash-Lite with a structured JSON response schema to score each one,
- * and writes the evaluation back to MongoDB (status → "evaluated").
+ * Reads today's scraped Emails documents (status == "scraped"), sends ALL of
+ * them in a SINGLE Gemini API call with structured JSON output, and writes the
+ * evaluations back to MongoDB (status → "evaluated").
  *
  * Env vars:
  *   MONGODB_URI        — required
@@ -22,43 +22,10 @@ const { MONGODB_URI, GEMINI_API_KEY, BUNCH_ID, EVAL_DRY_RUN } = process.env;
 
 const isDryRun = EVAL_DRY_RUN === "true";
 
-// ─── Gemini configuration ────────────────────────────────────────────────────
+const MODEL = "gemini-2.5-flash";
 
-const MODEL = "gemini-2.5-flash-lite-preview-06-17";
-
-// Rate limit: 15 RPM → one call every 4 seconds minimum.
-const RPM_LIMIT = 15;
-const MIN_CALL_INTERVAL_MS = Math.ceil((60 / RPM_LIMIT) * 1000); // 4000 ms
-
-// Structured output schema for Gemini
-const RESPONSE_SCHEMA = {
-  type: "object",
-  properties: {
-    score: {
-      type: "number",
-      description: "Reply probability between 0.0 and 1.0",
-    },
-    verdict: {
-      type: "string",
-      enum: ["send", "skip"],
-    },
-    reasoning: {
-      type: "string",
-      description: "One-sentence explanation of the verdict",
-    },
-    matched_keywords: {
-      type: "array",
-      items: { type: "string" },
-      description: "Keywords from the post that match the candidate profile",
-    },
-    personalization_hook: {
-      type: "string",
-      description:
-        "A short (1–2 sentence) personalised opener for the cold email referencing something specific from the post. Empty string if verdict is skip.",
-    },
-  },
-  required: ["score", "verdict", "reasoning", "matched_keywords", "personalization_hook"],
-};
+// Truncate post_text per doc to keep the prompt within token limits
+const POST_TEXT_LIMIT = 600;
 
 // ─── Candidate profile (hardcoded) ───────────────────────────────────────────
 
@@ -72,40 +39,23 @@ Location: Bengaluru, India. Open to remote or hybrid roles based in India.
 Target roles: SDE-1, Frontend Engineer, Full-Stack Engineer.
 `.trim();
 
-// ─── Prompt builder ───────────────────────────────────────────────────────────
+// ─── Response schema (array of evaluations) ──────────────────────────────────
 
-function buildPrompt(doc) {
-  const postContext = [
-    doc.post_text || "(no post text available)",
-    doc.role ? `Role mentioned: ${doc.role}` : "",
-    doc.company ? `Company: ${doc.company}` : "",
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  return `You are a job-search assistant. Given a recruiter's LinkedIn post and a candidate's profile, evaluate whether the candidate should send a cold email application.
-
-## Candidate profile
-${MY_PROFILE}
-
-## Recruiter post
-${postContext}
-
-## Skip rules (set verdict="skip" and score <= 0.3 if ANY of these apply)
-- Post explicitly requires 5+ years of experience
-- Role is backend-only, DevOps, ML/AI, data engineering, or QA — not frontend or full-stack
-- Role requires on-site work outside India
-- Post appears to be generic recruiter spam with no specific role, company, or tech stack context
-- Post is not actually a job posting (e.g., a news article, opinion piece, or ad)
-
-## Output
-Respond with a single JSON object matching the schema exactly.
-- score: float 0.0–1.0 (probability the candidate is a good fit and will get a reply)
-- verdict: "send" if score >= 0.7, otherwise "skip"
-- reasoning: one sentence
-- matched_keywords: array of specific terms from the post that match the candidate's stack
-- personalization_hook: if verdict is "send", write a 1–2 sentence personalised opener referencing something concrete from the post (e.g., company name, tech stack mentioned, problem they are solving). If verdict is "skip", return "".`;
-}
+const RESPONSE_SCHEMA = {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      email: { type: "string" },
+      score: { type: "number", description: "Reply probability 0.0–1.0" },
+      verdict: { type: "string", enum: ["send", "skip"] },
+      reasoning: { type: "string" },
+      matched_keywords: { type: "array", items: { type: "string" } },
+      personalization_hook: { type: "string" },
+    },
+    required: ["email", "score", "verdict", "reasoning", "matched_keywords", "personalization_hook"],
+  },
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -121,13 +71,49 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/**
- * Call Gemini with structured JSON output and retry up to 3× on 429/transient errors.
- */
-async function callGemini(client, prompt, retries = 3, baseMs = 5000) {
+function buildBatchPrompt(docs) {
+  const entries = docs.map((doc, i) => {
+    const postSnippet = (doc.post_text || "").slice(0, POST_TEXT_LIMIT).trim();
+    return [
+      `--- Entry ${i + 1} ---`,
+      `email: ${doc.email}`,
+      doc.company ? `company: ${doc.company}` : "",
+      doc.role ? `role: ${doc.role}` : "",
+      `post_text: ${postSnippet || "(none)"}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  });
+
+  return `You are a job-search assistant. Given a list of recruiter LinkedIn posts and a candidate profile, evaluate each post and decide whether the candidate should send a cold email.
+
+## Candidate profile
+${MY_PROFILE}
+
+## Skip rules (set verdict="skip" and score <= 0.3 if ANY apply)
+- Post explicitly requires 5+ years of experience
+- Role is backend-only, DevOps, ML/AI, data engineering, or QA — not frontend or full-stack
+- Role requires on-site work outside India
+- Post appears to be generic recruiter spam with no specific role, company, or tech stack context
+- Post is not actually a job posting
+
+## Posts to evaluate
+${entries.join("\n\n")}
+
+## Output
+Return a JSON array with one object per entry (same order). Each object:
+- email: the email address from the entry (copy exactly)
+- score: float 0.0–1.0 (fit probability)
+- verdict: "send" if score >= 0.7, else "skip"
+- reasoning: one sentence
+- matched_keywords: array of terms from the post matching the candidate's stack
+- personalization_hook: if verdict="send", a 1–2 sentence personalised opener referencing something specific from the post; otherwise ""`;
+}
+
+async function callGemini(genai, prompt, retries = 3, baseMs = 5000) {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const response = await client.models.generateContent({
+      const response = await genai.models.generateContent({
         model: MODEL,
         contents: [{ role: "user", parts: [{ text: prompt }] }],
         config: {
@@ -141,14 +127,7 @@ async function callGemini(client, prompt, retries = 3, baseMs = 5000) {
       if (!raw) throw new Error("Empty response from Gemini");
 
       const parsed = JSON.parse(raw);
-
-      // Clamp score to [0, 1]
-      parsed.score = Math.max(0, Math.min(1, Number(parsed.score) || 0));
-
-      // Enforce verdict consistency with score
-      if (parsed.score >= 0.7 && parsed.verdict !== "send") parsed.verdict = "send";
-      if (parsed.score < 0.7 && parsed.verdict !== "skip") parsed.verdict = "skip";
-
+      if (!Array.isArray(parsed)) throw new Error("Expected JSON array from Gemini");
       return parsed;
     } catch (e) {
       const isRateLimit =
@@ -157,7 +136,9 @@ async function callGemini(client, prompt, retries = 3, baseMs = 5000) {
         e.message?.toLowerCase().includes("quota");
 
       if (attempt < retries - 1) {
-        const wait = isRateLimit ? baseMs * Math.pow(2, attempt) + 10000 : baseMs * Math.pow(2, attempt);
+        const wait = isRateLimit
+          ? baseMs * Math.pow(2, attempt) + 10000
+          : baseMs * Math.pow(2, attempt);
         console.warn(`  ⚠️  Gemini error (attempt ${attempt + 1}/${retries}): ${e.message} — retrying in ${(wait / 1000).toFixed(1)}s`);
         await sleep(wait);
       } else {
@@ -173,10 +154,9 @@ async function main() {
   const bunchID = BUNCH_ID || todayBunchID();
 
   console.log(`\n🔍 evaluate-eligibility`);
-  console.log(`   bunchID  : ${bunchID}`);
-  console.log(`   model    : ${MODEL}`);
-  console.log(`   rpm limit: ${RPM_LIMIT} (min interval ${MIN_CALL_INTERVAL_MS}ms)`);
-  console.log(`   dry-run  : ${isDryRun}\n`);
+  console.log(`   bunchID : ${bunchID}`);
+  console.log(`   model   : ${MODEL}`);
+  console.log(`   dry-run : ${isDryRun}\n`);
 
   if (!MONGODB_URI) throw new Error("MONGODB_URI is not set");
   if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not set");
@@ -190,7 +170,6 @@ async function main() {
     const db = mongo.db("Linkedin_scrape");
     const emailsColl = db.collection("Emails");
 
-    // Fetch all scraped (unevaluated) docs for this bunch
     const docs = await emailsColl
       .find({ bunch_id: bunchID, status: "scraped" })
       .toArray();
@@ -202,96 +181,95 @@ async function main() {
       return;
     }
 
-    let evaluated = 0;
-    let skippedMissingText = 0;
-    let errors = 0;
+    // Separate docs with and without post_text
+    const withText = docs.filter((d) => d.post_text && d.post_text.trim().length >= 30);
+    const withoutText = docs.filter((d) => !d.post_text || d.post_text.trim().length < 30);
 
-    for (let i = 0; i < docs.length; i++) {
-      const doc = docs[i];
-      const label = `[${i + 1}/${docs.length}] ${doc.email}`;
+    console.log(`   ${withText.length} have post_text, ${withoutText.length} do not\n`);
 
-      // Skip docs with no post text — we can't make a meaningful decision
-      if (!doc.post_text || doc.post_text.trim().length < 30) {
-        console.log(`  ⏭️  ${label} — no post_text, skipping evaluation`);
-        skippedMissingText++;
-
-        if (!isDryRun) {
-          await emailsColl.updateOne(
-            { _id: doc._id },
-            {
-              $set: {
-                status: "evaluated",
-                evaluation: {
-                  score: 0,
-                  verdict: "skip",
-                  reasoning: "No post text available for evaluation",
-                  matched_keywords: [],
-                  personalization_hook: "",
-                  evaluatedAt: new Date(),
-                },
-              },
-            }
-          );
+    // Auto-skip docs with no post_text
+    if (withoutText.length && !isDryRun) {
+      const ids = withoutText.map((d) => d._id);
+      await emailsColl.updateMany(
+        { _id: { $in: ids } },
+        {
+          $set: {
+            status: "evaluated",
+            evaluation: {
+              score: 0,
+              verdict: "skip",
+              reasoning: "No post text available",
+              matched_keywords: [],
+              personalization_hook: "",
+              evaluatedAt: new Date(),
+            },
+          },
         }
+      );
+      console.log(`⏭️  Auto-skipped ${withoutText.length} docs with no post_text`);
+    }
+
+    if (!withText.length) {
+      console.log("ℹ️  No docs with post_text to evaluate.");
+      return;
+    }
+
+    // Single Gemini call for all docs
+    console.log(`🤖 Sending ${withText.length} posts to Gemini in one request...`);
+    const prompt = buildBatchPrompt(withText);
+    const results = await callGemini(genai, prompt);
+
+    console.log(`✅ Got ${results.length} evaluations back\n`);
+
+    // Build lookup by email for safety
+    const resultsByEmail = new Map(results.map((r) => [r.email, r]));
+
+    let send = 0, skip = 0, errors = 0;
+
+    for (const doc of withText) {
+      const result = resultsByEmail.get(doc.email);
+      if (!result) {
+        console.warn(`  ⚠️  No result returned for ${doc.email}`);
+        errors++;
         continue;
       }
 
-      // Rate-limit: enforce minimum interval between API calls
-      const callStart = Date.now();
+      // Clamp and enforce verdict/score consistency
+      result.score = Math.max(0, Math.min(1, Number(result.score) || 0));
+      if (result.score >= 0.7) result.verdict = "send";
+      else result.verdict = "skip";
 
-      try {
-        const prompt = buildPrompt(doc);
-        const result = await callGemini(genai, prompt);
+      const icon = result.verdict === "send" ? "✅" : "⏭️ ";
+      console.log(`  ${icon} ${doc.email} — score=${result.score.toFixed(2)} verdict=${result.verdict}`);
+      console.log(`     reasoning: ${result.reasoning}`);
+      if (result.matched_keywords?.length) console.log(`     keywords : ${result.matched_keywords.join(", ")}`);
+      if (result.personalization_hook) console.log(`     hook     : ${result.personalization_hook}`);
 
-        console.log(
-          `  ${result.verdict === "send" ? "✅" : "⏭️ "} ${label} — score=${result.score.toFixed(2)} verdict=${result.verdict}`
-        );
-        console.log(`     reasoning: ${result.reasoning}`);
-        if (result.matched_keywords?.length) {
-          console.log(`     keywords : ${result.matched_keywords.join(", ")}`);
-        }
-        if (result.personalization_hook) {
-          console.log(`     hook     : ${result.personalization_hook}`);
-        }
+      if (result.verdict === "send") send++; else skip++;
 
-        if (!isDryRun) {
-          await emailsColl.updateOne(
-            { _id: doc._id },
-            {
-              $set: {
-                status: "evaluated",
-                evaluation: {
-                  score: result.score,
-                  verdict: result.verdict,
-                  reasoning: result.reasoning,
-                  matched_keywords: result.matched_keywords || [],
-                  personalization_hook: result.personalization_hook || "",
-                  evaluatedAt: new Date(),
-                },
+      if (!isDryRun) {
+        await emailsColl.updateOne(
+          { _id: doc._id },
+          {
+            $set: {
+              status: "evaluated",
+              evaluation: {
+                score: result.score,
+                verdict: result.verdict,
+                reasoning: result.reasoning,
+                matched_keywords: result.matched_keywords || [],
+                personalization_hook: result.personalization_hook || "",
+                evaluatedAt: new Date(),
               },
-            }
-          );
-        } else {
-          console.log(`     [EVAL_DRY_RUN] Would write evaluation to MongoDB`);
-        }
-
-        evaluated++;
-      } catch (e) {
-        console.error(`  ❌ ${label} — evaluation failed: ${e.message}`);
-        errors++;
-      }
-
-      // Enforce RPM rate limit — sleep for the remainder of the minimum interval
-      const elapsed = Date.now() - callStart;
-      const remaining = MIN_CALL_INTERVAL_MS - elapsed;
-      if (remaining > 0 && i < docs.length - 1) {
-        await sleep(remaining);
+            },
+          }
+        );
+      } else {
+        console.log(`     [EVAL_DRY_RUN] Would write evaluation to MongoDB`);
       }
     }
 
-    console.log(
-      `\n📊 Done — evaluated: ${evaluated}, skipped (no text): ${skippedMissingText}, errors: ${errors}`
-    );
+    console.log(`\n📊 Done — send: ${send}, skip: ${skip}, errors: ${errors}, no-text: ${withoutText.length}`);
     if (errors > 0) process.exit(1);
   } finally {
     await mongo.close();
