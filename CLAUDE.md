@@ -5,14 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Sender (Node.js)
-node send-daily-emails.js                        # send today's batch
-DRY_RUN=true node send-daily-emails.js           # preview without sending
-BUNCH_ID=280326 node send-daily-emails.js        # re-send a specific day's batch
-
 # Scraper (Python)
 cd scraper && python main.py                     # headless (default)
 cd scraper && HEADLESS_MODE=false python main.py # headed browser for debugging
+
+# Evaluator (Node.js) — run after scrape, before send
+node evaluate-eligibility.js                     # score today's scraped docs via Gemini
+EVAL_DRY_RUN=true node evaluate-eligibility.js  # log verdicts without writing to MongoDB
+BUNCH_ID=280326 node evaluate-eligibility.js     # evaluate a specific day's batch
+
+# Sender (Node.js) — run after evaluate
+node send-daily-emails.js                        # send today's evaluated batch (score >= 0.7)
+DRY_RUN=true node send-daily-emails.js           # preview without sending
+BUNCH_ID=280326 node send-daily-emails.js        # re-send a specific day's batch
 
 # Express API server
 node server.js          # or: npm start
@@ -22,26 +27,39 @@ npm run dev             # nodemon with auto-reload
 docker build -t trackmail . && docker run --env-file .env trackmail
 ```
 
-**Required env vars:** `MONGODB_URI`, `EMAIL_USER`, `EMAIL_PASS` (Gmail App Password), `LINKEDIN_EMAIL`, `LINKEDIN_PASSWORD`
+**Required env vars:** `MONGODB_URI`, `EMAIL_USER`, `EMAIL_PASS` (Gmail App Password), `LINKEDIN_EMAIL`, `LINKEDIN_PASSWORD`, `GEMINI_API_KEY`
 
 ## Architecture
 
-Two independent subsystems that share a MongoDB database (`Linkedin_scrape`):
+Three-stage pipeline sharing a MongoDB database (`Linkedin_scrape`): **scrape → evaluate → send**
 
 **Python scraper (`scraper/`)**
 - `main.py` — entry point; reads `LINKEDIN_LINKS` from `config/linkedin_links.py`, launches Playwright browser, calls `LinkedInScraper.scrape_multiple_links()`
 - `scraper.py` — `LinkedInScraper` class; uses round-robin tab scrolling (single browser context, multiple tabs) to collect emails; saves session to `linkedin_context.json` to avoid re-login within 24 hours
-- `pages/search_page.py` — `LinkedInSearchPage` writes each extracted email directly to MongoDB (`Emails` collection) with a `bunch_id` in `DDMMYY` format
+- `pages/search_page.py` — `LinkedInSearchPage` writes each extracted email directly to MongoDB (`Emails` collection) with `bunch_id` (DDMMYY format), `post_text` (scraped hiring post body text), and `status: "scraped"`
+  - `extract_post_text_for_email(email)` — tries known LinkedIn post selectors (`div.feed-shared-update-v2`, `li.reusable-search__result-container`, etc.) then falls back to a 2000-char window around the email in the full page body
 - `config/settings.py` — all scroll timing, parallel worker count, and stop-condition thresholds
 - To add new LinkedIn search URLs: edit `config/linkedin_links.py` or run `python add_links.py`
 
+**LLM eligibility evaluator (`evaluate-eligibility.js`)**
+- Reads `Emails` docs where `{ bunch_id, status: "scraped" }` for today (or `BUNCH_ID` env override)
+- Calls Gemini 2.5 Flash-Lite (`gemini-2.5-flash-lite-preview-06-17`) with structured JSON output (`responseSchema`) for each doc
+- Profile context: hardcoded constant — Frontend/Full-stack Engineer, ~2yr exp, React/TS/Node/Postgres, Bangalore, open to remote/hybrid in India
+- Skip rules encoded in prompt: 5+ YOE required, non-frontend roles (backend-only/DevOps/ML/data), on-site outside India, generic recruiter spam
+- Output schema: `{ score: float 0–1, verdict: "send"|"skip", reasoning: string, matched_keywords: string[], personalization_hook: string }`
+- Rate limiting: 15 RPM (4-second minimum interval between calls); exponential backoff on 429s; 3 retries
+- Writes `evaluation` object and sets `status: "evaluated"` for each processed doc
+- Docs missing `post_text` are auto-skipped with `score: 0, verdict: "skip"`
+- `EVAL_DRY_RUN=true` — logs verdicts without writing to MongoDB
+
 **Node.js mailer (`send-daily-emails.js`)**
-- Reads `Emails` collection filtered by `bunch_id = DDMMYY` (today, or `BUNCH_ID` env override)
-- Skips emails already in `AlreadySent` collection (unique index on `email` field)
-- Personalizes `test.html` template by replacing `{{Name}}`, `{{Company}}`, `{{Role}}`, `{{CalendlyLink}}`, `{{ResumeLink}}`, `{{YourEmail}}` placeholders
-- Injects open-tracking pixel and click-tracking redirects via `https://test-open.sppathak1428.workers.dev`
-- Sends via Gmail SMTP (port 465, pooled, rate-limited to 20/min)
-- Retries failed sends up to 3× with exponential backoff; 1.2 s delay between each send
+- Reads `Emails` docs where `{ bunch_id, status: "evaluated", "evaluation.score": { $gte: 0.7 } }`, sorted by score desc
+- Skips emails already in `AlreadySent` or `Unsubscribed` collections; sets `status: "skipped"` on those docs
+- Substitutes `{{PersonalizationHook}}` in the HTML template with the LLM-generated opener (wrapped in `<p>` if non-empty)
+- Injects open-tracking pixel and click-tracking redirects via `addTracking()` from `tracking.js`
+- Sends via Gmail SMTP (port 465); retries up to 3× with exponential backoff
+- On successful send: inserts into `AlreadySent`, sets `status: "sent"` on the Emails doc
+- `DRY_RUN=true` — previews recipients and hook text without sending or writing to MongoDB
 
 **Express API (`server.js` + `mailer.js`)**
 - `mailer.js` — singleton Nodemailer transporter, exported as `{ transporter, sendEmail }`
@@ -82,7 +100,7 @@ Two independent subsystems that share a MongoDB database (`Linkedin_scrape`):
 - Set `VITE_API_URL` in `.env` (or Vercel env vars) to point to the deployed Express server
 - Update `vercel.json` rewrites with the actual backend URL before deploying
 
-**New env vars:**
+**Env vars:**
 ```
 DASHBOARD_PASSWORD=   # password for dashboard login
 JWT_SECRET=           # secret for signing JWTs
@@ -91,12 +109,14 @@ DASHBOARD_ORIGIN=     # allowed CORS origin (e.g. https://your-dashboard.vercel.
 TRACKING_WORKER_URL=  # Cloudflare Worker base URL (e.g. https://trackmail-pixel.workers.dev)
 VITE_API_URL=         # Express API URL for dashboard (e.g. https://your-api.railway.app)
 EXPRESS_API_URL=      # (Worker) same as above, set as wrangler secret
+GEMINI_API_KEY=       # Google AI Studio API key for evaluate-eligibility.js
 ```
 
 **GitHub Actions (`.github/workflows/daily-pipeline.yml`)**
-- Runs daily at 12:00 PM UTC (5:30 PM IST): `scrape` job → `send` job (sequential, `needs: scrape`)
-- Manual trigger supports `dry_run` and `bunch_id` inputs
-- Secrets required: `MONGODB_URI`, `EMAIL_USER`, `EMAIL_PASS`, `LINKEDIN_EMAIL`, `LINKEDIN_PASSWORD`
+- Three-job pipeline: `scrape` (03:00 UTC) → `evaluate` → `send` (chunk 0 at 04:03, chunk 1 at 08:07, chunk 2 at 11:02)
+- On manual `workflow_dispatch`: scrape → evaluate → send run sequentially
+- On send-window crons: scrape and evaluate are skipped; send reads yesterday's evaluated docs
+- Secrets required: `MONGODB_URI`, `EMAIL_USER`, `EMAIL_PASS`, `LINKEDIN_EMAIL`, `LINKEDIN_PASSWORD`, `GEMINI_API_KEY`
 - Database/collection names are hardcoded in the workflow env (`Linkedin_scrape` / `Emails`); `search_page.py` reads them from `MONGODB_DATABASE` / `MONGODB_COLLECTION` env vars
 
 ## Key details
@@ -106,3 +126,6 @@ EXPRESS_API_URL=      # (Worker) same as above, set as wrangler secret
 - Saved session (`linkedin_context.json`) is reused for up to 24 hours; delete it to force re-login
 - Gmail rate limit: Nodemailer pool is configured at `maxConnections: 1, rateLimit: 20` (20 emails/min); there is also a hard-coded 1200 ms sleep between sends in the CLI script
 - The email template (`test.html`) must remain a single line after loading — `loadTemplate()` strips all newlines before use
+- `Emails` doc status lifecycle: `"scraped"` (written by Python scraper) → `"evaluated"` (written by evaluator) → `"sent"` | `"skipped"` (written by sender)
+- The only placeholder in `test.html` body is `{{PersonalizationHook}}`; never add `{{Name}}`, `{{Company}}`, etc.
+- Evaluator Gemini model: `gemini-2.5-flash-lite-preview-06-17`; 15 RPM limit; 3 retries with exponential backoff on 429s; docs missing `post_text` are auto-skipped with score 0

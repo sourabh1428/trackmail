@@ -266,13 +266,70 @@ class LinkedInSearchPage(BasePage):
         
         return profiles
 
-    def save_profile_to_mongodb(self, email):
+    def extract_post_text_for_email(self, email):
         """
-        Save a profile to MongoDB
+        Extract the post body text most likely associated with the given email address.
+
+        Strategy (most-specific to least-specific):
+        1. Find all LinkedIn post containers (known selectors for feed/search result cards).
+        2. Among those that contain the email string, pick the innermost / smallest one.
+        3. Fall back to a 2000-char window around the email in the full page body text.
+
+        Returns the post text string, or "" if nothing useful is found.
+        """
+        try:
+            # Known LinkedIn post-card container selectors (search results + feed).
+            # These cover both the classic "reusable-search" layout and the newer
+            # "feed-shared-update-v2" layout seen on /search/results/content/ pages.
+            POST_SELECTORS = [
+                "div.feed-shared-update-v2",          # feed card (most common on content search)
+                "li.reusable-search__result-container", # search result list item
+                "div.update-components-text",          # text block inside a post card
+                "div.occludable-update",               # alternative feed card wrapper
+                "article",                             # generic article elements
+            ]
+
+            for selector in POST_SELECTORS:
+                try:
+                    containers = self.page.locator(selector).all()
+                    for container in containers:
+                        try:
+                            text = container.inner_text()
+                            if email in text and len(text) > 20:
+                                # Trim to a reasonable length to avoid noise
+                                return text.strip()[:3000]
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
+
+            # Fallback: 2000-char window around the email in the full page text
+            try:
+                full_text = self.page.inner_text("body")
+                idx = full_text.find(email)
+                if idx != -1:
+                    start = max(0, idx - 800)
+                    end = min(len(full_text), idx + 1200)
+                    return full_text[start:end].strip()
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"⚠️ Could not extract post text for {email}: {e}")
+
+        return ""
+
+    def save_profile_to_mongodb(self, email, post_text=None):
+        """
+        Save a profile to MongoDB, including the scraped post body and status field.
         """
         if self.collection is None:
             return
-        
+
+        # Attempt to extract the post text from the live page if not provided
+        if post_text is None:
+            post_text = self.extract_post_text_for_email(email)
+
         try:
             # Create document
             document = {
@@ -280,13 +337,15 @@ class LinkedInSearchPage(BasePage):
                 "name": self.get_initials(email),
                 "bunch_id": self.bunch_id,
                 "timestamp": datetime.now(),
-                "source": "linkedin_scraper"
+                "source": "linkedin_scraper",
+                "post_text": post_text,
+                "status": "scraped",
             }
-            
+
             # Insert into MongoDB
-            result = self.collection.insert_one(document)
-            print(f"💾 SAVED TO DATABASE: {email}")
-            
+            self.collection.insert_one(document)
+            print(f"💾 SAVED TO DATABASE: {email} (post_text: {len(post_text)} chars)")
+
         except Exception as e:
             print(f"❌ Failed to save to MongoDB: {email} - {e}")
 

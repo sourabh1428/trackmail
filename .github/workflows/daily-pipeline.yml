@@ -93,14 +93,45 @@ jobs:
           path: scraper/screenshots/
           if-no-files-found: ignore
 
-  # ── Send: runs at the three send-window crons OR after scrape on manual dispatch ──
-  # needs: scrape so that workflow_dispatch waits for scrape to finish first.
-  # On send-window crons scrape is skipped, so we allow 'skipped' as a valid result.
-  send:
-    name: Send email chunk
+  # ── Evaluate: runs after scrape (on scrape-cron or manual dispatch) ──
+  # Calls Gemini to score each scraped doc and set status="evaluated".
+  evaluate:
+    name: Evaluate eligibility (LLM)
     needs: scrape
     if: >
       (needs.scrape.result == 'success' || needs.scrape.result == 'skipped') &&
+      (github.event.schedule == '0 3 * * 1-5' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --omit=dev
+
+      - name: Run eligibility evaluator
+        env:
+          MONGODB_URI:     ${{ secrets.MONGODB_URI }}
+          GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
+          BUNCH_ID:        ${{ inputs.bunch_id || '' }}
+        run: node evaluate-eligibility.js
+
+  # ── Send: runs at the three send-window crons OR after evaluate on manual dispatch ──
+  # needs: evaluate so that workflow_dispatch waits for evaluate to finish first.
+  # On send-window crons both scrape and evaluate are skipped, so we allow 'skipped'.
+  send:
+    name: Send email chunk
+    needs: evaluate
+    if: >
+      (needs.evaluate.result == 'success' || needs.evaluate.result == 'skipped') &&
       (github.event.schedule == '3 4 * * 1-5'  ||
        github.event.schedule == '7 8 * * 1-5'  ||
        github.event.schedule == '2 11 * * 1-5' ||
