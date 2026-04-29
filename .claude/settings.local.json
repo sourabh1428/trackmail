@@ -31,7 +31,12 @@
       "Bash(DRY_RUN=true CHUNK_INDEX=0 CHUNK_SIZE=12 MAX_DAILY_SENDS=35 BUNCH_ID=260426 node *)",
       "Bash(DRY_RUN=true CHUNK_INDEX=0 CHUNK_SIZE=12 MAX_DAILY_SENDS=35 BUNCH_ID=310326 node *)",
       "Bash(DRY_RUN=true CHUNK_INDEX=0 CHUNK_SIZE=5 MAX_DAILY_SENDS=35 BUNCH_ID=test node *)",
-      "Bash(DRY_RUN=true CHUNK_INDEX=1 CHUNK_SIZE=12 MAX_DAILY_SENDS=35 BUNCH_ID=310326 node *)"
+      "Bash(DRY_RUN=true CHUNK_INDEX=1 CHUNK_SIZE=12 MAX_DAILY_SENDS=35 BUNCH_ID=310326 node *)",
+      "Bash(MONGODB_URI=\"\" GEMINI_API_KEY=\"\" node evaluate-eligibility.js)",
+      "Bash(python -m py_compile scraper/pages/search_page.py)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d['dependencies'].get\\('@google/genai', 'NOT FOUND'\\)\\)\")",
+      "Bash(EVAL_DRY_RUN=true BUNCH_ID=290426 node evaluate-eligibility.js)",
+      "Bash(BUNCH_ID=290426 node evaluate-eligibility.js)"
     ]
   }
 }

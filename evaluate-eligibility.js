@@ -22,7 +22,7 @@ const { MONGODB_URI, GEMINI_API_KEY, BUNCH_ID, EVAL_DRY_RUN } = process.env;
 
 const isDryRun = EVAL_DRY_RUN === "true";
 
-const MODEL = "gemini-2.5-flash";
+const MODEL = "gemini-2.0-flash";
 
 // Truncate post_text per doc to keep the prompt within token limits
 const POST_TEXT_LIMIT = 600;
@@ -132,8 +132,10 @@ async function callGemini(genai, prompt, retries = 3, baseMs = 5000) {
     } catch (e) {
       const isRateLimit =
         e.message?.includes("429") ||
+        e.message?.includes("503") ||
         e.message?.toLowerCase().includes("rate") ||
-        e.message?.toLowerCase().includes("quota");
+        e.message?.toLowerCase().includes("quota") ||
+        e.message?.toLowerCase().includes("unavailable");
 
       if (attempt < retries - 1) {
         const wait = isRateLimit
