@@ -1,13 +1,13 @@
 "use strict";
 
-const nodemailer = require("nodemailer");
 const { MongoClient } = require("mongodb");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
+const { sendViaConnectors } = require("./connectors");
 
 const {
-  MONGODB_URI, EMAIL_USER, EMAIL_PASS, BUNCH_ID, DRY_RUN,
+  MONGODB_URI, EMAIL_USER, BUNCH_ID, DRY_RUN,
   CHUNK_SIZE:        _CHUNK_SIZE,
   CHUNK_INDEX:       _CHUNK_INDEX,
   SEND_DELAY_MIN_MS: _DELAY_MIN,
@@ -55,7 +55,7 @@ function loadTextTemplate() {
 }
 
 function buildUnsubscribeHeaders(email) {
-  const mailto = `<mailto:${EMAIL_USER}?subject=unsubscribe>`;
+  const mailto = `<mailto:${EMAIL_REPLY_TO}?subject=unsubscribe>`;
   if (API_BASE_URL) {
     const url = `${API_BASE_URL}/unsubscribe?email=${encodeURIComponent(email)}`;
     return {
@@ -76,6 +76,7 @@ async function loadActiveTemplate(db) {
   return loadFallbackTemplate();
 }
 
+const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || EMAIL_USER;
 const FROM_ADDRESS = EMAIL_USER ? `"Sourabh Pathak" <${EMAIL_USER}>` : undefined;
 const API_BASE_URL = process.env.API_BASE_URL || "";
 
@@ -83,13 +84,14 @@ function randomDelay(minMs, maxMs) {
   return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
 }
 
-// Only retry transient errors; skip permanent 5xx SMTP failures
+// Only retry transient errors; skip permanent 4xx SES failures (except 429 rate-limit)
 async function retry(fn, retries = 3, baseMs = 5000) {
   for (let i = 0; i < retries; i++) {
     try {
       return await fn();
     } catch (e) {
-      if (e.responseCode >= 500 && e.responseCode < 600) throw e; // permanent failure — don't retry
+      const status = e.$metadata?.httpStatusCode;
+      if (status && status >= 400 && status < 500 && status !== 429) throw e; // permanent failure — don't retry
       if (i === retries - 1) throw e;
       const wait = baseMs * Math.pow(2, i);
       console.log(`  ⏳ retry ${i + 1}/${retries} in ${wait}ms — ${e.message}`);
@@ -114,11 +116,10 @@ async function main() {
   console.log(`   from      : ${EMAIL_USER}\n`);
 
   if (!MONGODB_URI) throw new Error("MONGODB_URI is not set");
-  if (!EMAIL_USER || !EMAIL_PASS) throw new Error("EMAIL_USER / EMAIL_PASS not set");
+  if (!EMAIL_USER) throw new Error("EMAIL_USER not set");
 
   const mongo = new MongoClient(MONGODB_URI, { serverSelectionTimeoutMS: 20000 });
   await mongo.connect();
-  let transporter;
   try {
     const db = mongo.db("Linkedin_scrape");
     const emailsColl = db.collection("Emails");
@@ -199,15 +200,6 @@ async function main() {
       return;
     }
 
-    // No pool — sendMail blocks until SMTP delivery so the jitter below
-    // genuinely spaces transmissions rather than just queue-intake events.
-    transporter = nodemailer.createTransport({
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
-      auth: { user: EMAIL_USER, pass: EMAIL_PASS },
-    });
-
     const template = await loadActiveTemplate(db);
     const plainText = loadTextTemplate();
     const SUBJECT = "Application for software engineering role";
@@ -230,22 +222,16 @@ async function main() {
       const html = addTracking(personalizedTemplate, email, bunchID);
 
       if (isDry) {
-        console.log(`  [DRY] would send → ${email} (score=${(doc.evaluation?.score ?? "n/a")}, hook="${hook.slice(0, 60)}")`);
+        console.log(`  [DRY] would send → ${email} (score=${(doc.evaluation?.score ?? "n/a")}, hook="${hookRaw.slice(0, 60)}")`);
         success++;
         continue; // no delay in dry-run — preview is instant
       }
 
       try {
-        const mailOptions = {
-          from: FROM_ADDRESS,
-          replyTo: EMAIL_USER,
-          to: email,
-          subject: SUBJECT,
-          html,
-          text: plainText || undefined,
-          headers: buildUnsubscribeHeaders(email),
-        };
-        await retry(() => transporter.sendMail(mailOptions));
+        const response = await retry(() => sendViaConnectors(
+          { to: email, subject: SUBJECT, html, text: plainText, replyTo: EMAIL_REPLY_TO },
+          db
+        ));
 
         if (email !== EMAIL_USER) {
           await alreadySentCol.insertOne({ email, sentAt: new Date(), createdAt: new Date(), bunch_id: bunchID, subject: SUBJECT })
@@ -257,7 +243,7 @@ async function main() {
         }
 
         success++;
-        console.log(`  ✅ ${email}`);
+        console.log(`  ✅ ${email} via ${response.connector} (MessageId=${response.messageId})`);
       } catch (e) {
         failed++;
         console.error(`  ❌ ${email} — ${e.message}`);
@@ -275,7 +261,6 @@ async function main() {
     console.log(`\n📊 Chunk ${CHUNK_INDEX} done — sent: ${success}, failed: ${failed}, elapsed: ${elapsed}s`);
     if (failed > 0) process.exit(1);
   } finally {
-    if (transporter) transporter.close();
     await mongo.close();
   }
 }

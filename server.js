@@ -60,6 +60,7 @@ app.get("/unsubscribe", async (req, res) => {
 // routes/stats.js and routes/templates.js each apply verifyJWT internally
 app.use("/", require("./routes/stats"));           // GET /api/bunches, /api/stats, /api/events
 app.use("/api", require("./routes/templates"));    // CRUD /api/templates
+app.use("/api/connectors", require("./routes/connectors")); // GET + PUT /api/connectors/limits
 
 async function retryOnce(fn, { retries = 3, baseDelayMs = 500 } = {}) {
   let attempt = 0;
@@ -168,10 +169,7 @@ async function shutdown() {
 process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
-// Start: verify SMTP, connect DB, then listen
 async function start() {
-  await require("./mailer").transporter.verify();
-  console.log("[mailer] SMTP verified");
   await connectDB();
   app.listen(PORT, () => console.log(`[server] listening on port ${PORT}`));
 }
