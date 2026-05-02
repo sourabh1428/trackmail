@@ -3,13 +3,9 @@
 const router = require("express").Router();
 const { verifyJWT } = require("../middleware/auth");
 const { getDB } = require("../db");
-const { VALID_CONNECTORS } = require("../connectors");
+const { VALID_CONNECTORS, getISTDate } = require("../connectors");
 
 router.use(verifyJWT);
-
-function getISTDate() {
-  return new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
-}
 
 router.get("/", async (req, res) => {
   try {

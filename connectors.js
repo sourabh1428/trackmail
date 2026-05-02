@@ -12,6 +12,7 @@ function getISTDate() {
 }
 
 async function sendViaSES({ to, subject, html, text, replyTo }) {
+  if (!process.env.EMAIL_USER) throw new Error("[ses] EMAIL_USER env var is not set");
   const client = new SESClient({ region: process.env.AWS_REGION || "ap-south-1" });
   const fromAddr = `"Sourabh Pathak" <${process.env.EMAIL_USER}>`;
   const replyToAddr = replyTo || process.env.EMAIL_REPLY_TO || process.env.EMAIL_USER;
@@ -31,6 +32,8 @@ async function sendViaSES({ to, subject, html, text, replyTo }) {
 }
 
 async function sendViaGmail({ to, subject, html, text, replyTo }) {
+  if (!process.env.EMAIL_USER2) throw new Error("[gmail] EMAIL_USER2 env var is not set");
+  if (!process.env.EMAIL_PASS2) throw new Error("[gmail] EMAIL_PASS2 env var is not set");
   const transporter = nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 587,
@@ -49,6 +52,7 @@ async function sendViaGmail({ to, subject, html, text, replyTo }) {
 }
 
 async function sendViaResend({ to, subject, html, text, replyTo }) {
+  if (!process.env.resend_api_key) throw new Error("[resend] resend_api_key env var is not set");
   const resend = new Resend(process.env.resend_api_key);
   const result = await resend.emails.send({
     from: RESEND_FROM,

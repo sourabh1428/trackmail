@@ -164,14 +164,20 @@ jobs:
 
       - name: Send email chunk
         env:
-          MONGODB_URI:       ${{ secrets.MONGODB_URI }}
-          EMAIL_USER:        ${{ secrets.EMAIL_USER }}
-          EMAIL_PASS:        ${{ secrets.EMAIL_PASS }}
-          BUNCH_ID:          ${{ inputs.bunch_id || '' }}
-          DRY_RUN:           ${{ inputs.dry_run || 'false' }}
-          CHUNK_INDEX:       ${{ steps.chunk.outputs.index }}
-          CHUNK_SIZE:        "12"
-          MAX_DAILY_SENDS:   "35"
-          SEND_DELAY_MIN_MS: "45000"
-          SEND_DELAY_MAX_MS: "90000"
+          MONGODB_URI:            ${{ secrets.MONGODB_URI }}
+          EMAIL_USER:             ${{ secrets.EMAIL_USER }}
+          EMAIL_REPLY_TO:         ${{ secrets.EMAIL_REPLY_TO }}
+          AWS_ACCESS_KEY_ID:      ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION:             ${{ secrets.AWS_REGION }}
+          EMAIL_USER2:            ${{ secrets.EMAIL_USER2 }}
+          EMAIL_PASS2:            ${{ secrets.EMAIL_PASS2 }}
+          resend_api_key:         ${{ secrets.RESEND_API_KEY }}
+          BUNCH_ID:               ${{ inputs.bunch_id || '' }}
+          DRY_RUN:                ${{ inputs.dry_run || 'false' }}
+          CHUNK_INDEX:            ${{ steps.chunk.outputs.index }}
+          CHUNK_SIZE:             "12"
+          MAX_DAILY_SENDS:        "35"
+          SEND_DELAY_MIN_MS:      "45000"
+          SEND_DELAY_MAX_MS:      "90000"
         run: node send-daily-emails.js

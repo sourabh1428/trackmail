@@ -228,10 +228,10 @@ async function main() {
       }
 
       try {
-        const response = await retry(() => sendViaConnectors(
+        const response = await sendViaConnectors(
           { to: email, subject: SUBJECT, html, text: plainText, replyTo: EMAIL_REPLY_TO },
           db
-        ));
+        );
 
         if (email !== EMAIL_USER) {
           await alreadySentCol.insertOne({ email, sentAt: new Date(), createdAt: new Date(), bunch_id: bunchID, subject: SUBJECT })
