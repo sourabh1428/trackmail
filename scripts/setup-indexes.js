@@ -42,6 +42,13 @@ async function main() {
   );
   console.log("✅ AlreadySent index: { email } (unique)");
 
+  // ConnectorUsage: unique compound index for atomic upsert (name + IST date)
+  await db.collection("ConnectorUsage").createIndex(
+    { name: 1, istDate: 1 },
+    { unique: true, background: true }
+  );
+  console.log("✅ ConnectorUsage index: { name, istDate } (unique)");
+
   await client.close();
   console.log("\n✅ All indexes created successfully.");
 }
