@@ -47,8 +47,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Clean up test data
+  // Restore default connector configs so the live pipeline isn't broken after tests
+  const defaults = [
+    { name: "ses",    dailyLimit: 200, enabled: true, order: 1 },
+    { name: "gmail",  dailyLimit: 100, enabled: true, order: 2 },
+    { name: "resend", dailyLimit: 100, enabled: true, order: 3 },
+  ];
   await db.collection("ConnectorConfigs").deleteMany({});
+  await db.collection("ConnectorConfigs").insertMany(defaults);
+  // Clean up today's test usage docs
   await db.collection("ConnectorUsage").deleteMany({ istDate: TODAY });
   await mongoClient.close();
 });
