@@ -51,7 +51,9 @@ afterAll(async () => {
   const defaults = [
     { name: "ses",    dailyLimit: 200, enabled: true, order: 1 },
     { name: "gmail",  dailyLimit: 100, enabled: true, order: 2 },
-    { name: "resend", dailyLimit: 100, enabled: true, order: 3 },
+    { name: "gmail2", dailyLimit: 100, enabled: true, order: 3 },
+    { name: "gmail3", dailyLimit: 100, enabled: true, order: 4 },
+    { name: "resend", dailyLimit: 100, enabled: true, order: 5 },
   ];
   await db.collection("ConnectorConfigs").deleteMany({});
   await db.collection("ConnectorConfigs").insertMany(defaults);

@@ -15,11 +15,11 @@ const {
   MAX_DAILY_SENDS:   _MAX_DAILY,
 } = process.env;
 
-const CHUNK_SIZE      = Math.min(parseInt(_CHUNK_SIZE  ?? "12",  10), 50);
+const CHUNK_SIZE      = Math.min(parseInt(_CHUNK_SIZE  ?? "30",  10), 200);
 const CHUNK_INDEX     = Math.max(parseInt(_CHUNK_INDEX ?? "0",   10), 0);
 const DELAY_MIN_MS    = parseInt(_DELAY_MIN ?? "45000", 10);
 const DELAY_MAX_MS    = parseInt(_DELAY_MAX ?? "90000", 10);
-const MAX_DAILY_SENDS = Math.min(parseInt(_MAX_DAILY ?? "35",    10), 50);
+const MAX_DAILY_SENDS = Math.min(parseInt(_MAX_DAILY ?? "90",    10), 200);
 
 if ([CHUNK_SIZE, CHUNK_INDEX, MAX_DAILY_SENDS, DELAY_MIN_MS, DELAY_MAX_MS].some(isNaN)) {
   throw new Error("Invalid env: CHUNK_SIZE, CHUNK_INDEX, MAX_DAILY_SENDS, SEND_DELAY_MIN/MAX_MS must be integers");
@@ -170,11 +170,17 @@ async function main() {
       ).catch(() => {});
     }
 
-    // Self-email is only injected into chunk 0 to avoid triple-send across 3 daily runs
+    // Self-email is only injected into chunk 0 to avoid triple-send across 3 daily runs.
+    // Use a date-based check (was-sent-today) because the AlreadySent unique index is on
+    // { email } only — bunch_id-scoped queries miss entries written with a different bunch_id,
+    // and insertOne for the self-email silently fails with 11000 if any prior entry exists.
     const allEligibleDocs = validDocs.filter(u => !sentSet.has(u.email) && !unsubSet.has(u.email));
-    if (EMAIL_USER && CHUNK_INDEX === 0 && !sentSet.has(EMAIL_USER) && !allEligibleDocs.find(u => u.email === EMAIL_USER)) {
-      // Inject self-email as a synthetic doc (no evaluation doc needed)
-      allEligibleDocs.unshift({ email: EMAIL_USER, evaluation: { personalization_hook: "" } });
+    if (EMAIL_USER && CHUNK_INDEX === 0 && !allEligibleDocs.find(u => u.email === EMAIL_USER)) {
+      const selfTodayStart = new Date(); selfTodayStart.setUTCHours(0, 0, 0, 0);
+      const selfAlreadySent = await alreadySentCol.findOne({ email: EMAIL_USER, sentAt: { $gte: selfTodayStart } });
+      if (!selfAlreadySent) {
+        allEligibleDocs.unshift({ email: EMAIL_USER, evaluation: { personalization_hook: "" } });
+      }
     }
 
     // Enforce daily cap: count sends recorded today (UTC day) across all bunches
@@ -202,7 +208,6 @@ async function main() {
 
     const template = await loadActiveTemplate(db);
     const plainText = loadTextTemplate();
-    const SUBJECT = "Application for software engineering role";
 
     let success = 0, failed = 0;
     const startTime = Date.now();
@@ -221,10 +226,32 @@ async function main() {
       const personalizedTemplate = template.replace(/\{\{PersonalizationHook\}\}/g, hookHtml);
       const html = addTracking(personalizedTemplate, email, bunchID);
 
+      // Build a personalized subject line using matched_keywords from the evaluation.
+      // Picks up to 2 keywords most relevant to the candidate's stack; falls back to a
+      // generic subject if the evaluator returned none.
+      const FALLBACK_SUBJECT = "Application for software engineering role";
+      const keywords = (doc.evaluation?.matched_keywords || [])
+        .filter(k => typeof k === "string" && k.trim().length > 0)
+        .slice(0, 2);
+      const SUBJECT = keywords.length > 0
+        ? `Application — ${keywords.join(" / ")} engineer`
+        : FALLBACK_SUBJECT;
+
       if (isDry) {
-        console.log(`  [DRY] would send → ${email} (score=${(doc.evaluation?.score ?? "n/a")}, hook="${hookRaw.slice(0, 60)}")`);
+        console.log(`  [DRY] would send → ${email} (score=${(doc.evaluation?.score ?? "n/a")}, subject="${SUBJECT}", hook="${hookRaw.slice(0, 60)}")`);
         success++;
         continue; // no delay in dry-run — preview is instant
+      }
+
+      // Guard against concurrent runs: re-check AlreadySent immediately before sending.
+      // The pre-flight check above is a snapshot; a parallel run may have sent this
+      // email in the window since then. A findOne here is cheap and closes that gap.
+      // Also guards the self-email — since it is tracked in AlreadySent now, this check
+      // prevents it from being re-sent if the script is run again for the same bunch.
+      const alreadyClaimedNow = await alreadySentCol.findOne({ email, bunch_id: bunchID });
+      if (alreadyClaimedNow) {
+        console.log(`  ⏭️  ${email} — already sent by concurrent run, skipping`);
+        continue;
       }
 
       try {
@@ -233,13 +260,22 @@ async function main() {
           db
         );
 
-        if (email !== EMAIL_USER) {
+        if (email === EMAIL_USER) {
+          // Self-email: update in place so sentAt stays current (unique index on email blocks
+          // insertOne when any prior entry exists, making the date-based injection guard stale).
+          await alreadySentCol.updateOne(
+            { email },
+            { $set: { sentAt: new Date(), bunch_id: bunchID, subject: SUBJECT },
+              $setOnInsert: { email, createdAt: new Date() } },
+            { upsert: true }
+          ).catch(() => {});
+        } else {
           await alreadySentCol.insertOne({ email, sentAt: new Date(), createdAt: new Date(), bunch_id: bunchID, subject: SUBJECT })
             .catch(e => { if (e.code !== 11000) throw e; });
-          // Update status to "sent" in Emails collection
-          if (doc._id) {
-            await emailsColl.updateOne({ _id: doc._id }, { $set: { status: "sent" } }).catch(() => {});
-          }
+        }
+        // Update status to "sent" in Emails collection (synthetic self-email docs have no _id)
+        if (doc._id) {
+          await emailsColl.updateOne({ _id: doc._id }, { $set: { status: "sent" } }).catch(() => {});
         }
 
         success++;

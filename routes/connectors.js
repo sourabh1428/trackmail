@@ -41,7 +41,7 @@ router.put("/limits", async (req, res) => {
   const keys = Object.keys(body);
 
   if (!keys.length) {
-    return res.status(400).json({ error: "Body must contain at least one connector key (ses, gmail, resend)" });
+    return res.status(400).json({ error: "Body must contain at least one connector key (ses, gmail, gmail2, gmail3, resend)" });
   }
 
   const unknown = keys.filter(k => !VALID_CONNECTORS.includes(k));

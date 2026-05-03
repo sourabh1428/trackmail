@@ -5,7 +5,7 @@ const nodemailer = require("nodemailer");
 const { Resend } = require("resend");
 
 const RESEND_FROM = "Sourabh Pathak <sourabh@referral.sourabhpathak.online>";
-const VALID_CONNECTORS = ["ses", "gmail", "resend"];
+const VALID_CONNECTORS = ["ses", "gmail", "gmail2", "gmail3", "resend"];
 
 function getISTDate() {
   return new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
@@ -51,6 +51,46 @@ async function sendViaGmail({ to, subject, html, text, replyTo }) {
   return { messageId: result.messageId };
 }
 
+async function sendViaGmail2({ to, subject, html, text, replyTo }) {
+  if (!process.env.EMAIL_USER3) throw new Error("[gmail2] EMAIL_USER3 env var is not set");
+  if (!process.env.EMAIL_PASS3) throw new Error("[gmail2] EMAIL_PASS3 env var is not set");
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false,
+    auth: { user: process.env.EMAIL_USER3, pass: process.env.EMAIL_PASS3 },
+  });
+  const result = await transporter.sendMail({
+    from: `"Sourabh Pathak" <${process.env.EMAIL_USER3}>`,
+    to,
+    subject,
+    html,
+    text,
+    replyTo,
+  });
+  return { messageId: result.messageId };
+}
+
+async function sendViaGmail3({ to, subject, html, text, replyTo }) {
+  if (!process.env.EMAIL_USER4) throw new Error("[gmail3] EMAIL_USER4 env var is not set");
+  if (!process.env.EMAIL_PASS4) throw new Error("[gmail3] EMAIL_PASS4 env var is not set");
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false,
+    auth: { user: process.env.EMAIL_USER4, pass: process.env.EMAIL_PASS4 },
+  });
+  const result = await transporter.sendMail({
+    from: `"Sourabh Pathak" <${process.env.EMAIL_USER4}>`,
+    to,
+    subject,
+    html,
+    text,
+    replyTo,
+  });
+  return { messageId: result.messageId };
+}
+
 async function sendViaResend({ to, subject, html, text, replyTo }) {
   if (!process.env.resend_api_key) throw new Error("[resend] resend_api_key env var is not set");
   const resend = new Resend(process.env.resend_api_key);
@@ -66,7 +106,7 @@ async function sendViaResend({ to, subject, html, text, replyTo }) {
   return { messageId: result.data?.id };
 }
 
-const SENDERS = { ses: sendViaSES, gmail: sendViaGmail, resend: sendViaResend };
+const SENDERS = { ses: sendViaSES, gmail: sendViaGmail, gmail2: sendViaGmail2, gmail3: sendViaGmail3, resend: sendViaResend };
 
 async function sendViaConnectors({ to, subject, html, text, replyTo }, db) {
   const istDate = getISTDate();
@@ -88,18 +128,27 @@ async function sendViaConnectors({ to, subject, html, text, replyTo }, db) {
     const sender = SENDERS[config.name];
     if (!sender) continue;
 
+    let result;
     try {
-      const result = await sender({ to, subject, html, text, replyTo });
+      result = await sender({ to, subject, html, text, replyTo });
+    } catch (e) {
+      console.error(`[connectors] ${config.name} failed: ${e.message}`);
+      lastError = e;
+      continue;
+    }
+
+    // Send succeeded. Usage tracking in its own try so a DB blip here never
+    // causes fallthrough to the next connector (which would send a duplicate).
+    try {
       await db.collection("ConnectorUsage").updateOne(
         { name: config.name, istDate },
         { $inc: { sent: 1 } },
         { upsert: true }
       );
-      return { connector: config.name, messageId: result.messageId };
     } catch (e) {
-      console.error(`[connectors] ${config.name} failed: ${e.message}`);
-      lastError = e;
+      console.warn(`[connectors] usage tracking failed for ${config.name}: ${e.message}`);
     }
+    return { connector: config.name, messageId: result.messageId };
   }
 
   throw lastError || new Error("All connectors exhausted for today");

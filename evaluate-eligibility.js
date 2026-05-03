@@ -26,7 +26,10 @@ const isDryRun = EVAL_DRY_RUN === "true";
 const MODEL = "llama-3.3-70b-versatile";
 
 // Truncate post_text per doc to keep the prompt within token limits
-const POST_TEXT_LIMIT = 600;
+const POST_TEXT_LIMIT = 400;
+
+// Max docs per Groq call — free tier is 12K TPM; ~200 tokens/doc → 50 docs ≈ 10K tokens
+const BATCH_SIZE = 40;
 
 // ─── Candidate profile (hardcoded) ───────────────────────────────────────────
 
@@ -111,17 +114,27 @@ async function callGroq(client, prompt, retries = 3, baseMs = 5000) {
 
       const parsed = JSON.parse(raw);
 
-      // Groq json_object mode may wrap the array in a key — unwrap if needed
-      const results = Array.isArray(parsed)
-        ? parsed
-        : Array.isArray(parsed.results)
-        ? parsed.results
-        : Array.isArray(parsed.evaluations)
-        ? parsed.evaluations
-        : null;
+      // Groq json_object mode may return: a bare array, a wrapper object with
+      // an array value, or (for single-doc batches) a flat evaluation object.
+      let results = null;
+      if (Array.isArray(parsed)) {
+        results = parsed;
+      } else if (parsed && typeof parsed.email === "string") {
+        // Flat single-evaluation object — wrap it
+        results = [parsed];
+      } else {
+        // Pick the first key whose value is an array of objects
+        for (const val of Object.values(parsed)) {
+          if (Array.isArray(val) && val.some((x) => x && typeof x === "object" && typeof x.email === "string")) {
+            results = val;
+            break;
+          }
+        }
+      }
 
       if (!results) throw new Error(`Expected JSON array from Groq, got: ${JSON.stringify(parsed).slice(0, 200)}`);
-      return results;
+      // Filter out any non-object junk elements the LLM may hallucinate
+      return results.filter((r) => r && typeof r === "object" && typeof r.email === "string");
     } catch (e) {
       const isRateLimit =
         e.status === 429 ||
@@ -208,20 +221,34 @@ async function main() {
       return;
     }
 
-    // Single Groq call for all docs
-    console.log(`🤖 Sending ${withText.length} posts to Groq (${MODEL}) in one request...`);
-    const prompt = buildBatchPrompt(withText);
-    const results = await callGroq(groq, prompt);
+    // Chunk docs to stay within free-tier TPM limits
+    const chunks = [];
+    for (let i = 0; i < withText.length; i += BATCH_SIZE) {
+      chunks.push(withText.slice(i, i + BATCH_SIZE));
+    }
+    console.log(`🤖 Sending ${withText.length} posts to Groq (${MODEL}) in ${chunks.length} batch(es)...`);
 
-    console.log(`✅ Got ${results.length} evaluations back\n`);
+    const allResults = [];
+    for (let i = 0; i < chunks.length; i++) {
+      if (i > 0) {
+        console.log(`   ⏳ Waiting 4s before batch ${i + 1}/${chunks.length}...`);
+        await sleep(4000);
+      }
+      console.log(`   Batch ${i + 1}/${chunks.length}: ${chunks[i].length} docs`);
+      const batchResults = await callGroq(groq, buildBatchPrompt(chunks[i]));
+      allResults.push(...batchResults);
+    }
 
-    // Build lookup by email for safety
-    const resultsByEmail = new Map(results.map((r) => [r.email, r]));
+    console.log(`✅ Got ${allResults.length} evaluations back\n`);
+
+    // Match by index (LLM preserves order per prompt); email lookup as fallback
+    const resultsByEmail = new Map(allResults.map((r) => [r.email, r]));
 
     let send = 0, skip = 0, errors = 0;
 
-    for (const doc of withText) {
-      const result = resultsByEmail.get(doc.email);
+    for (let idx = 0; idx < withText.length; idx++) {
+      const doc = withText[idx];
+      const result = allResults[idx] ?? resultsByEmail.get(doc.email);
       if (!result) {
         console.warn(`  ⚠️  No result returned for ${doc.email}`);
         errors++;

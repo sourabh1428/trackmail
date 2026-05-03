@@ -1,4 +1,4 @@
-name = "test-open"
+name = "trackmail-pixel"
 main = "index.js"
 compatibility_date = "2024-09-23"   # Workflows require >= 2024-09-23
 
@@ -16,5 +16,6 @@ binding = "TRACKING_WORKFLOW"
 class_name = "TrackingWorkflow"
 
 # Secrets (set via wrangler CLI, never commit values):
-#   wrangler secret put EXPRESS_API_URL
-#   wrangler secret put TRACK_SECRET
+#   wrangler secret put TRACK_SECRET   — shared secret for /d1/* endpoints
+# Note: EXPRESS_API_URL is not used by this worker; tracking writes directly
+# to D1 via the TrackingWorkflow durable object (no Express proxy needed).

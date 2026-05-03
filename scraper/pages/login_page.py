@@ -41,8 +41,9 @@ class LinkedInLoginPage(BasePage):
         # Get element position
         element = self.page.locator(selector)
         if element.count() > 0:
-            # Move mouse to element with slight randomness
-            element.hover()
+            # Move mouse to element with slight randomness; use .first to avoid
+            # strict-mode violations when a selector matches multiple elements
+            element.first.hover()
             # Add small random movement
             self.page.mouse.move(
                 random.randint(-5, 5), 

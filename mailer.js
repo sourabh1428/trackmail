@@ -1,37 +1,34 @@
 "use strict";
 
-const nodemailer = require("nodemailer");
+const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 
-const { EMAIL_USER, EMAIL_PASS } = process.env;
+const { EMAIL_USER } = process.env;
+const EMAIL_REPLY_TO = process.env.EMAIL_REPLY_TO || EMAIL_USER;
 
-if (!EMAIL_USER || !EMAIL_PASS) {
-  console.warn("[mailer] EMAIL_USER/EMAIL_PASS not set. Emails will fail until provided.");
+if (!EMAIL_USER) {
+  console.warn("[mailer] EMAIL_USER not set. Emails will fail until provided.");
 }
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 465,
-  secure: true,
-  auth: { user: EMAIL_USER, pass: EMAIL_PASS },
-});
-
-// transporter.verify() is called by server.js start() to fail fast on bad credentials
+const sesClient = new SESClient({ region: process.env.AWS_REGION || "ap-south-1" });
 
 const FROM_ADDRESS = EMAIL_USER ? `"Sourabh Pathak" <${EMAIL_USER}>` : EMAIL_USER;
 
-const DEFAULT_HEADERS = {
-  "List-Unsubscribe": `<mailto:${EMAIL_USER}?subject=unsubscribe>`,
-};
-
-async function sendEmail({ to, subject, text, html, attachments, headers, replyTo }) {
+async function sendEmail({ to, subject, text, html, replyTo }) {
   if (!to) throw new Error("'to' is required");
   if (!subject) throw new Error("'subject' is required");
-  return transporter.sendMail({
-    from: FROM_ADDRESS,
-    replyTo: replyTo || EMAIL_USER,
-    to, subject, text, html, attachments,
-    headers: { ...DEFAULT_HEADERS, ...headers },
-  });
+  const response = await sesClient.send(new SendEmailCommand({
+    Source: FROM_ADDRESS,
+    Destination: { ToAddresses: [to] },
+    ReplyToAddresses: [replyTo || EMAIL_REPLY_TO],
+    Message: {
+      Subject: { Data: subject, Charset: "UTF-8" },
+      Body: {
+        ...(html ? { Html: { Data: html, Charset: "UTF-8" } } : {}),
+        ...(text ? { Text: { Data: text, Charset: "UTF-8" } } : {}),
+      },
+    },
+  }));
+  return { messageId: response.MessageId };
 }
 
-module.exports = { transporter, sendEmail };
+module.exports = { sendEmail };
