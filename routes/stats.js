@@ -639,16 +639,52 @@ router.get("/api/analytics", async (req, res) => {
   }
 });
 
+// Fetch tracking events from Cloudflare D1 (preferred) or MongoDB (fallback).
+// Returns [{email, event, timestamp (ISO string), url, bunch_id}]
+async function fetchTrackingEvents(db, bunchId) {
+  const workerBase = process.env.TRACKING_WORKER_URL;
+  const trackSecret = process.env.TRACK_SECRET || "";
+
+  if (!workerBase) {
+    const filter = bunchId ? { bunch_id: bunchId } : {};
+    return db.collection("TrackingEvents").find(filter).sort({ timestamp: 1 }).toArray();
+  }
+
+  let bunchIds;
+  if (bunchId) {
+    bunchIds = [bunchId];
+  } else {
+    const allBunches = await db.collection("AlreadySent").distinct("bunch_id");
+    bunchIds = allBunches.sort().reverse().slice(0, 30);
+  }
+
+  const batches = await Promise.all(
+    bunchIds.map(async (bid) => {
+      try {
+        const res = await fetch(`${workerBase}/d1/events?bunch_id=${encodeURIComponent(bid)}`, {
+          headers: { "x-track-secret": trackSecret },
+        });
+        if (!res.ok) return [];
+        const rows = await res.json();
+        return (rows || []).map((e) => ({ ...e, bunch_id: bid }));
+      } catch {
+        return [];
+      }
+    })
+  );
+
+  return batches.flat().sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+}
+
 router.get("/api/insights", async (req, res) => {
   try {
     const { bunchId } = req.query;
     const db = getDB();
     const sentFilter = bunchId ? { bunch_id: bunchId } : {};
-    const eventFilter = bunchId ? { bunch_id: bunchId } : {};
 
     const [sentDocs, allEvents] = await Promise.all([
       db.collection("AlreadySent").find(sentFilter).toArray(),
-      db.collection("TrackingEvents").find(eventFilter).sort({ timestamp: 1 }).toArray(),
+      fetchTrackingEvents(db, bunchId),
     ]);
 
     const repliesCount = await db.collection("Replies").countDocuments(
@@ -810,10 +846,9 @@ router.get("/api/explore/links", async (req, res) => {
   try {
     const { bunchId } = req.query;
     const db = getDB();
-    const filter = { event: "click" };
-    if (bunchId) filter.bunch_id = bunchId;
-    const urls = await db.collection("TrackingEvents").distinct("url", filter);
-    return res.json(urls.filter(Boolean).sort());
+    const events = await fetchTrackingEvents(db, bunchId);
+    const urls = [...new Set(events.filter((e) => e.event === "click" && e.url).map((e) => e.url))].sort();
+    return res.json(urls);
   } catch (e) {
     console.error("[api/explore/links]", e.message);
     return res.status(500).json({ error: e.message });
@@ -825,15 +860,12 @@ router.get("/api/explore/timeline", async (req, res) => {
     const { email, bunchId } = req.query;
     if (!email) return res.status(400).json({ error: "email required" });
     const db = getDB();
-    const filter = { email: normalizeEmail(email) };
-    if (bunchId) filter.bunch_id = bunchId;
-    const events = await db
-      .collection("TrackingEvents")
-      .find(filter)
-      .sort({ timestamp: 1 })
-      .project({ _id: 0, event: 1, timestamp: 1, url: 1, bunch_id: 1 })
-      .toArray();
-    return res.json(events);
+    const targetEmail = normalizeEmail(email);
+    const events = await fetchTrackingEvents(db, bunchId);
+    const filtered = events
+      .filter((e) => normalizeEmail(e.email) === targetEmail)
+      .map(({ event, timestamp, url, bunch_id }) => ({ event, timestamp, url, bunch_id }));
+    return res.json(filtered);
   } catch (e) {
     console.error("[api/explore/timeline]", e.message);
     return res.status(500).json({ error: e.message });
@@ -845,11 +877,10 @@ router.post("/api/explore/query", async (req, res) => {
     const { conditions = [], bunchId } = req.body || {};
     const db = getDB();
     const sentFilter = bunchId ? { bunch_id: bunchId } : {};
-    const eventFilter = bunchId ? { bunch_id: bunchId } : {};
 
     const [sentDocs, events] = await Promise.all([
       db.collection("AlreadySent").find(sentFilter).toArray(),
-      db.collection("TrackingEvents").find(eventFilter).toArray(),
+      fetchTrackingEvents(db, bunchId),
     ]);
 
     const openCounts = {};
