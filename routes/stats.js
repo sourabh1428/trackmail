@@ -639,4 +639,290 @@ router.get("/api/analytics", async (req, res) => {
   }
 });
 
+router.get("/api/insights", async (req, res) => {
+  try {
+    const { bunchId } = req.query;
+    const db = getDB();
+    const sentFilter = bunchId ? { bunch_id: bunchId } : {};
+    const eventFilter = bunchId ? { bunch_id: bunchId } : {};
+
+    const [sentDocs, allEvents] = await Promise.all([
+      db.collection("AlreadySent").find(sentFilter).toArray(),
+      db.collection("TrackingEvents").find(eventFilter).sort({ timestamp: 1 }).toArray(),
+    ]);
+
+    const repliesCount = await db.collection("Replies").countDocuments(
+      bunchId ? { bunch_id: bunchId } : {}
+    ).catch(() => 0);
+
+    const openEvents = allEvents.filter((e) => e.event === "open");
+    const clickEvents = allEvents.filter((e) => e.event === "click");
+
+    const sent = sentDocs.length;
+    const uniqueOpeners = new Set(openEvents.map((e) => normalizeEmail(e.email))).size;
+    const uniqueClickers = new Set(clickEvents.map((e) => normalizeEmail(e.email))).size;
+    const openRate = sent > 0 ? Math.round((uniqueOpeners / sent) * 100) : 0;
+    const clickRate = sent > 0 ? Math.round((uniqueClickers / sent) * 100) : 0;
+
+    const now = Date.now();
+    const sevenDaysAgo = now - 7 * 86400000;
+    const recentOpens = openEvents.filter((e) => new Date(e.timestamp).getTime() >= sevenDaysAgo);
+    const byDate = {};
+    for (const e of recentOpens) {
+      const date = new Date(e.timestamp).toISOString().slice(0, 10);
+      byDate[date] = (byDate[date] || 0) + 1;
+    }
+    const opensOverTime = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now - i * 86400000).toISOString().slice(0, 10);
+      opensOverTime.push({ date: d.slice(5), opens: byDate[d] || 0 });
+    }
+
+    const emailOpenCounts = {};
+    const emailClickCounts = {};
+    for (const e of openEvents) {
+      const em = normalizeEmail(e.email);
+      emailOpenCounts[em] = (emailOpenCounts[em] || 0) + 1;
+    }
+    for (const e of clickEvents) {
+      const em = normalizeEmail(e.email);
+      emailClickCounts[em] = (emailClickCounts[em] || 0) + 1;
+    }
+
+    const funnel = [
+      { label: "Sent", count: sent, color: "#3b82f6" },
+      { label: "Opened", count: uniqueOpeners, color: "#22c55e" },
+      { label: "Clicked", count: uniqueClickers, color: "#f59e0b" },
+      { label: "Replied", count: repliesCount, color: "#a855f7" },
+    ];
+
+    const insights = [];
+
+    const multiOpenersNoClick = Object.keys(emailOpenCounts)
+      .filter((em) => emailOpenCounts[em] >= 2 && !emailClickCounts[em]).length;
+    if (multiOpenersNoClick > 0) {
+      insights.push({
+        type: "warning",
+        text: `${multiOpenersNoClick} ${multiOpenersNoClick === 1 ? "person" : "people"} opened 2+ times but never clicked — prime follow-up targets`,
+      });
+    }
+
+    const calendlyClickers = new Set(
+      clickEvents.filter((e) => e.url && e.url.toLowerCase().includes("calendly")).map((e) => e.email)
+    ).size;
+    if (calendlyClickers > 0) {
+      insights.push({
+        type: "info",
+        text: `${calendlyClickers} ${calendlyClickers === 1 ? "person" : "people"} clicked your Calendly link`,
+      });
+    }
+
+    if (openEvents.length > 0) {
+      const hourCounts = {};
+      for (const e of openEvents) {
+        const h = new Date(e.timestamp).getHours();
+        hourCounts[h] = (hourCounts[h] || 0) + 1;
+      }
+      const [bestHour] = Object.entries(hourCounts).sort((a, b) => b[1] - a[1]);
+      if (bestHour) {
+        const h = parseInt(bestHour[0]);
+        const ampm = h < 12 ? "AM" : "PM";
+        const display = h === 0 ? 12 : h > 12 ? h - 12 : h;
+        insights.push({ type: "success", text: `Best open time: ${display}–${display + 1} ${ampm} IST` });
+      }
+    }
+
+    const domainSent = {};
+    const domainOpened = {};
+    for (const doc of sentDocs) {
+      const em = normalizeEmail(doc.email || doc.to);
+      const domain = domainFromEmail(em);
+      if (domain) domainSent[domain] = (domainSent[domain] || 0) + 1;
+    }
+    for (const em of Object.keys(emailOpenCounts)) {
+      const domain = domainFromEmail(em);
+      if (domain) domainOpened[domain] = (domainOpened[domain] || 0) + 1;
+    }
+    const spamDomains = Object.keys(domainSent).filter(
+      (d) => domainSent[d] >= 3 && !domainOpened[d]
+    ).length;
+    if (spamDomains > 0) {
+      insights.push({
+        type: "danger",
+        text: `${spamDomains} ${spamDomains === 1 ? "domain" : "domains"} with 0% open rate — check spam filters`,
+      });
+    }
+
+    const weeks = new Map();
+    const sendTime = Array.from({ length: 7 }, (_, day) => ({
+      day,
+      hours: Array.from({ length: 24 }, (_, hour) => ({ hour, opens: 0 })),
+    }));
+    const domainDelivery = new Map();
+
+    for (const doc of sentDocs) {
+      const em = normalizeEmail(doc.email || doc.to);
+      const sentAt = doc.sentAt ? new Date(doc.sentAt) : null;
+      if (sentAt && !isNaN(sentAt)) {
+        const week = sentAt.toISOString().slice(0, 10);
+        if (!weeks.has(week)) weeks.set(week, { week, sent: 0, opened: 0, replied: 0 });
+        weeks.get(week).sent += 1;
+      }
+      const domain = domainFromEmail(em);
+      if (domain) {
+        if (!domainDelivery.has(domain)) domainDelivery.set(domain, { domain, sent: 0, opened: 0 });
+        domainDelivery.get(domain).sent += 1;
+      }
+    }
+    for (const e of openEvents) {
+      const em = normalizeEmail(e.email);
+      const openedAt = new Date(e.timestamp);
+      if (!isNaN(openedAt)) {
+        const week = openedAt.toISOString().slice(0, 10);
+        if (weeks.has(week)) weeks.get(week).opened += 1;
+        sendTime[openedAt.getDay()].hours[openedAt.getHours()].opens += 1;
+      }
+      const domain = domainFromEmail(em);
+      if (domain && domainDelivery.has(domain)) domainDelivery.get(domain).opened += 1;
+    }
+
+    const deliverability = [...domainDelivery.values()]
+      .map((d) => ({ ...d, openRate: d.sent ? Math.round((d.opened / d.sent) * 100) : 0, flagged: d.sent >= 20 && d.opened === 0 }))
+      .sort((a, b) => b.sent - a.sent)
+      .slice(0, 20);
+
+    return res.json({
+      stats: { sent, openRate, clickRate, replies: repliesCount },
+      opensOverTime,
+      funnel,
+      insights,
+      weeklyTrends: [...weeks.values()].sort((a, b) => a.week.localeCompare(b.week)).slice(-8),
+      sendTime,
+      deliverability,
+    });
+  } catch (e) {
+    console.error("[api/insights]", e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/api/explore/links", async (req, res) => {
+  try {
+    const { bunchId } = req.query;
+    const db = getDB();
+    const filter = { event: "click" };
+    if (bunchId) filter.bunch_id = bunchId;
+    const urls = await db.collection("TrackingEvents").distinct("url", filter);
+    return res.json(urls.filter(Boolean).sort());
+  } catch (e) {
+    console.error("[api/explore/links]", e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+router.get("/api/explore/timeline", async (req, res) => {
+  try {
+    const { email, bunchId } = req.query;
+    if (!email) return res.status(400).json({ error: "email required" });
+    const db = getDB();
+    const filter = { email: normalizeEmail(email) };
+    if (bunchId) filter.bunch_id = bunchId;
+    const events = await db
+      .collection("TrackingEvents")
+      .find(filter)
+      .sort({ timestamp: 1 })
+      .project({ _id: 0, event: 1, timestamp: 1, url: 1, bunch_id: 1 })
+      .toArray();
+    return res.json(events);
+  } catch (e) {
+    console.error("[api/explore/timeline]", e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+router.post("/api/explore/query", async (req, res) => {
+  try {
+    const { conditions = [], bunchId } = req.body || {};
+    const db = getDB();
+    const sentFilter = bunchId ? { bunch_id: bunchId } : {};
+    const eventFilter = bunchId ? { bunch_id: bunchId } : {};
+
+    const [sentDocs, events] = await Promise.all([
+      db.collection("AlreadySent").find(sentFilter).toArray(),
+      db.collection("TrackingEvents").find(eventFilter).toArray(),
+    ]);
+
+    const openCounts = {};
+    const clickCounts = {};
+    const clickedUrls = {};
+    for (const e of events) {
+      const em = normalizeEmail(e.email);
+      if (e.event === "open") openCounts[em] = (openCounts[em] || 0) + 1;
+      if (e.event === "click") {
+        clickCounts[em] = (clickCounts[em] || 0) + 1;
+        if (!clickedUrls[em]) clickedUrls[em] = new Set();
+        if (e.url) clickedUrls[em].add(e.url);
+      }
+    }
+
+    const repliedEmails = new Set(
+      (await db.collection("AlreadySent").find({ ...sentFilter, replied: true }).project({ email: 1 }).toArray())
+        .map((d) => normalizeEmail(d.email || d.to))
+    );
+
+    const emailMap = new Map();
+    for (const doc of sentDocs) {
+      const em = normalizeEmail(doc.email || doc.to);
+      if (!em || emailMap.has(em)) continue;
+      emailMap.set(em, {
+        email: em,
+        openCount: openCounts[em] || 0,
+        clickCount: clickCounts[em] || 0,
+        replied: repliedEmails.has(em),
+        clickedUrlSet: clickedUrls[em] || new Set(),
+      });
+    }
+
+    let results = [...emailMap.values()];
+    for (const cond of conditions) {
+      switch (cond.type) {
+        case "opened":
+          if (cond.operator === "gte") results = results.filter((r) => r.openCount >= Number(cond.value));
+          else if (cond.operator === "eq") results = results.filter((r) => r.openCount === Number(cond.value));
+          else if (cond.operator === "never") results = results.filter((r) => r.openCount === 0);
+          break;
+        case "clicked":
+          if (cond.operator === "gte") results = results.filter((r) => r.clickCount >= Number(cond.value));
+          else if (cond.operator === "eq") results = results.filter((r) => r.clickCount === Number(cond.value));
+          else if (cond.operator === "never") results = results.filter((r) => r.clickCount === 0);
+          break;
+        case "clicked_link":
+          results = results.filter((r) => cond.url && r.clickedUrlSet.has(cond.url));
+          break;
+        case "came_back":
+          results = results.filter((r) => cond.value ? r.clickCount > 1 : r.clickCount <= 1);
+          break;
+        case "replied":
+          results = results.filter((r) => cond.value ? r.replied : !r.replied);
+          break;
+        case "domain":
+          if (cond.operator === "contains") results = results.filter((r) => r.email.split("@")[1]?.includes(cond.value));
+          else if (cond.operator === "eq") results = results.filter((r) => r.email.split("@")[1] === cond.value);
+          break;
+        default:
+          break;
+      }
+    }
+
+    return res.json(
+      results
+        .map((r) => ({ email: r.email, openCount: r.openCount, clickCount: r.clickCount, replied: r.replied }))
+        .sort((a, b) => b.openCount - a.openCount || b.clickCount - a.clickCount)
+    );
+  } catch (e) {
+    console.error("[api/explore/query]", e.message);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
 module.exports = router;

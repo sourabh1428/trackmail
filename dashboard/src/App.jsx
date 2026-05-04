@@ -4,7 +4,8 @@ import Overview from "./pages/Overview";
 import Recipients from "./pages/Recipients";
 import Templates from "./pages/Templates";
 import Companies from "./pages/Companies";
-import Analytics from "./pages/Analytics";
+import Insights from "./pages/Insights";
+import Explore from "./pages/Explore";
 import Navbar from "./components/Navbar";
 
 function ProtectedLayout() {
@@ -30,7 +31,9 @@ export default function App() {
           <Route path="/recipients" element={<Recipients />} />
           <Route path="/companies" element={<Companies />} />
           <Route path="/templates" element={<Templates />} />
-          <Route path="/analytics" element={<Analytics />} />
+          <Route path="/insights" element={<Insights />} />
+          <Route path="/explore" element={<Explore />} />
+          <Route path="/analytics" element={<Navigate to="/insights" replace />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

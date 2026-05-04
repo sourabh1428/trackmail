@@ -50,7 +50,8 @@ const links = [
   { to: "/recipients", label: "Recipients", icon: <UsersIcon /> },
   { to: "/companies", label: "Companies", icon: <UsersIcon /> },
   { to: "/templates", label: "Templates", icon: <FileIcon /> },
-  { to: "/analytics", label: "Analytics", icon: <GridIcon /> },
+  { to: "/insights", label: "Insights", icon: <GridIcon /> },
+  { to: "/explore", label: "Explore", icon: <UsersIcon /> },
 ];
 
 export default function Navbar() {
