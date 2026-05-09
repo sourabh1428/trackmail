@@ -6,6 +6,8 @@ import Templates from "./pages/Templates";
 import Companies from "./pages/Companies";
 import Analytics from "./pages/Analytics";
 import Navbar from "./components/Navbar";
+import Scraper from "./pages/Scraper";
+import Connectors from "./pages/Connectors";
 
 function ProtectedLayout() {
   const token = localStorage.getItem("trackmail_token");
@@ -31,6 +33,8 @@ export default function App() {
           <Route path="/companies" element={<Companies />} />
           <Route path="/templates" element={<Templates />} />
           <Route path="/analytics" element={<Analytics />} />
+          <Route path="/scraper" element={<Scraper />} />
+          <Route path="/connectors" element={<Connectors />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

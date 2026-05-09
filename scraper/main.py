@@ -6,7 +6,6 @@ from playwright.sync_api import sync_playwright
 from scraper import LinkedInScraper
 import csv
 from datetime import datetime
-from config.linkedin_links import LINKEDIN_LINKS
 from config.settings import MAX_PARALLEL_WORKERS
 
 def save_to_csv(data, filename_prefix="extraction"):
@@ -33,6 +32,41 @@ def save_to_csv(data, filename_prefix="extraction"):
 	print(f"Emails saved to {filename}")
 	return filename
 
+def get_linkedin_links():
+	"""
+	Fetch LinkedIn search URLs from a configured source.
+
+	Source is determined by SCRAPER_LINKS_SOURCE environment variable:
+	- "api" (default if API URL is set): fetch from REST API
+	- "file" (default): use static config file
+
+	Environment variables:
+	- SCRAPER_LINKS_SOURCE: "api" or "file" (default: "file")
+	- SCRAPER_API_URL: API base URL (default: "http://localhost:3000")
+	- SCRAPER_INTERNAL_TOKEN: Bearer token for API auth (default: "")
+
+	Returns:
+		list: LinkedIn search URLs
+	"""
+	source = os.environ.get("SCRAPER_LINKS_SOURCE", "file")
+	if source == "api":
+		import urllib.request
+		import json as _json
+		api_url = os.environ.get("SCRAPER_API_URL", "http://localhost:3000")
+		token = os.environ.get("SCRAPER_INTERNAL_TOKEN", "")
+		req = urllib.request.Request(
+			f"{api_url}/api/scraper/links",
+			headers={"Authorization": f"Bearer {token}"}
+		)
+		with urllib.request.urlopen(req, timeout=10) as resp:
+			data = _json.loads(resp.read())
+		links = [item["url"] for item in data if item.get("enabled", True)]
+		print(f"[scraper] Loaded {len(links)} links from API")
+		return links
+	else:
+		from config.linkedin_links import LINKEDIN_LINKS
+		return LINKEDIN_LINKS
+
 def main():
 	"""Main function to run the LinkedIn scraper"""
 	print("🔍 Starting LinkedIn Scraper...")
@@ -43,9 +77,9 @@ def main():
 
 	# Only keep browser open in headed/local mode for inspection
 	keep_open = not headless_mode
-	
-	# Use LinkedIn links from configuration file
-	linkedin_links = LINKEDIN_LINKS
+
+	# Fetch LinkedIn links from configured source (API or file)
+	linkedin_links = get_linkedin_links()
 	
 	print(f"📋 Will scrape {len(linkedin_links)} LinkedIn links:")
 	for i, link in enumerate(linkedin_links, 1):
@@ -126,8 +160,8 @@ def main():
 			else:
 				print("❌ No results obtained from any links")
 
-			# Auto-trigger email send (local runs only — GHA handles this as a separate job)
-			if shutil.which("node"):
+			# Auto-trigger email send (local/GHA runs only — skip when triggered from dashboard)
+			if shutil.which("node") and os.environ.get("SCRAPER_LINKS_SOURCE") != "api":
 				send_script = os.path.join(os.path.dirname(__file__), "..", "send-daily-emails.js")
 				send_script = os.path.abspath(send_script)
 				print(f"\n📧 Triggering email send: node {send_script}")

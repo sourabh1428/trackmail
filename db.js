@@ -18,6 +18,7 @@ async function connectDB() {
   await db.collection("AlreadySent").createIndex({ email: 1 }, { unique: true }).catch(() => {});
   await db.collection("TrackingEvents").createIndex({ email: 1, event: 1 }).catch(() => {});
   await db.collection("TrackingEvents").createIndex({ bunch_id: 1 }).catch(() => {});
+  await db.collection("ScraperLinks").createIndex({ url: 1 }, { unique: true }).catch(() => {});
 
   console.log("[db] connected to MongoDB");
   return db;
