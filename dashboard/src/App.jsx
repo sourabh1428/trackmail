@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
+﻿import { BrowserRouter, Routes, Route, Navigate, Outlet } from "react-router-dom";
 import Login from "./pages/Login";
 import Overview from "./pages/Overview";
 import Recipients from "./pages/Recipients";
@@ -6,6 +6,8 @@ import Templates from "./pages/Templates";
 import Companies from "./pages/Companies";
 import Insights from "./pages/Insights";
 import Explore from "./pages/Explore";
+import Scraper from "./pages/Scraper";
+import Connectors from "./pages/Connectors";
 import Navbar from "./components/Navbar";
 
 function ProtectedLayout() {
@@ -34,6 +36,8 @@ export default function App() {
           <Route path="/insights" element={<Insights />} />
           <Route path="/explore" element={<Explore />} />
           <Route path="/analytics" element={<Navigate to="/insights" replace />} />
+          <Route path="/scraper" element={<Scraper />} />
+          <Route path="/connectors" element={<Connectors />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

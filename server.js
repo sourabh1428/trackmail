@@ -61,6 +61,7 @@ app.get("/unsubscribe", async (req, res) => {
 app.use("/", require("./routes/stats"));           // GET /api/bunches, /api/stats, /api/events
 app.use("/api", require("./routes/templates"));    // CRUD /api/templates
 app.use("/api/connectors", require("./routes/connectors")); // GET + PUT /api/connectors/limits
+app.use("/api/scraper", require("./routes/scraper"));       // GET/POST /api/scraper/links, /run, /status, /logs
 
 async function retryOnce(fn, { retries = 3, baseDelayMs = 500 } = {}) {
   let attempt = 0;

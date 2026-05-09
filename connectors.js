@@ -5,7 +5,7 @@ const nodemailer = require("nodemailer");
 const { Resend } = require("resend");
 
 const RESEND_FROM = "Sourabh Pathak <sourabh@referral.sourabhpathak.online>";
-const VALID_CONNECTORS = ["ses", "gmail", "gmail2", "gmail3", "resend"];
+const VALID_CONNECTORS = ["ses", "gmail", "gmail2", "gmail3", "gmail4", "resend"];
 
 function getISTDate() {
   return new Date(Date.now() + 5.5 * 3600 * 1000).toISOString().slice(0, 10);
@@ -91,6 +91,26 @@ async function sendViaGmail3({ to, subject, html, text, replyTo }) {
   return { messageId: result.messageId };
 }
 
+async function sendViaGmail4({ to, subject, html, text, replyTo }) {
+  if (!process.env.EMAIL_USER5) throw new Error("[gmail4] EMAIL_USER5 env var is not set");
+  if (!process.env.EMAIL_PASS5) throw new Error("[gmail4] EMAIL_PASS5 env var is not set");
+  const transporter = nodemailer.createTransport({
+    host: "smtp.gmail.com",
+    port: 587,
+    secure: false,
+    auth: { user: process.env.EMAIL_USER5, pass: process.env.EMAIL_PASS5 },
+  });
+  const result = await transporter.sendMail({
+    from: `"Sourabh Pathak" <${process.env.EMAIL_USER5}>`,
+    to,
+    subject,
+    html,
+    text,
+    replyTo,
+  });
+  return { messageId: result.messageId };
+}
+
 async function sendViaResend({ to, subject, html, text, replyTo }) {
   if (!process.env.resend_api_key) throw new Error("[resend] resend_api_key env var is not set");
   const resend = new Resend(process.env.resend_api_key);
@@ -106,7 +126,7 @@ async function sendViaResend({ to, subject, html, text, replyTo }) {
   return { messageId: result.data?.id };
 }
 
-const SENDERS = { ses: sendViaSES, gmail: sendViaGmail, gmail2: sendViaGmail2, gmail3: sendViaGmail3, resend: sendViaResend };
+const SENDERS = { ses: sendViaSES, gmail: sendViaGmail, gmail2: sendViaGmail2, gmail3: sendViaGmail3, gmail4: sendViaGmail4, resend: sendViaResend };
 
 async function sendViaConnectors({ to, subject, html, text, replyTo }, db) {
   const istDate = getISTDate();
