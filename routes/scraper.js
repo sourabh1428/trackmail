@@ -47,12 +47,14 @@ function spawnScraperProcess(runId, db) {
       SCRAPER_API_URL: `http://localhost:${process.env.PORT || 3000}`,
       SCRAPER_INTERNAL_TOKEN: process.env.SCRAPER_INTERNAL_TOKEN || "",
       HEADLESS_MODE: "true",
+      PYTHONIOENCODING: "utf-8",
+      PYTHONUTF8: "1",
     },
   });
 
   const pushLine = (line) => { if (line.trim()) LogBus.emit(runId, line.trim()); };
-  proc.stdout.on("data", (chunk) => chunk.toString().split("\n").forEach(pushLine));
-  proc.stderr.on("data", (chunk) => chunk.toString().split("\n").forEach(pushLine));
+  proc.stdout.on("data", (chunk) => chunk.toString("utf8").split("\n").forEach(pushLine));
+  proc.stderr.on("data", (chunk) => chunk.toString("utf8").split("\n").forEach(pushLine));
 
   proc.on("close", async (code) => {
     try {
