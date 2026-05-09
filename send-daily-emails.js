@@ -4,25 +4,19 @@ const { MongoClient } = require("mongodb");
 const fs = require("fs");
 const path = require("path");
 require("dotenv").config();
-const { sendViaConnectors } = require("./connectors");
+const { sendViaConnectors, ensureConnectorDefaults } = require("./connectors");
 
 const {
   MONGODB_URI, EMAIL_USER, BUNCH_ID, DRY_RUN,
-  CHUNK_SIZE:        _CHUNK_SIZE,
-  CHUNK_INDEX:       _CHUNK_INDEX,
   SEND_DELAY_MIN_MS: _DELAY_MIN,
   SEND_DELAY_MAX_MS: _DELAY_MAX,
-  MAX_DAILY_SENDS:   _MAX_DAILY,
 } = process.env;
 
-const CHUNK_SIZE      = Math.min(parseInt(_CHUNK_SIZE  ?? "30",  10), 200);
-const CHUNK_INDEX     = Math.max(parseInt(_CHUNK_INDEX ?? "0",   10), 0);
-const DELAY_MIN_MS    = parseInt(_DELAY_MIN ?? "45000", 10);
-const DELAY_MAX_MS    = parseInt(_DELAY_MAX ?? "90000", 10);
-const MAX_DAILY_SENDS = Math.min(parseInt(_MAX_DAILY ?? "90",    10), 200);
+const DELAY_MIN_MS = parseInt(_DELAY_MIN ?? "45000", 10);
+const DELAY_MAX_MS = parseInt(_DELAY_MAX ?? "90000", 10);
 
-if ([CHUNK_SIZE, CHUNK_INDEX, MAX_DAILY_SENDS, DELAY_MIN_MS, DELAY_MAX_MS].some(isNaN)) {
-  throw new Error("Invalid env: CHUNK_SIZE, CHUNK_INDEX, MAX_DAILY_SENDS, SEND_DELAY_MIN/MAX_MS must be integers");
+if ([DELAY_MIN_MS, DELAY_MAX_MS].some(isNaN)) {
+  throw new Error("Invalid env: SEND_DELAY_MIN/MAX_MS must be integers");
 }
 if (DELAY_MIN_MS > DELAY_MAX_MS) {
   throw new Error(`SEND_DELAY_MIN_MS (${DELAY_MIN_MS}) must be <= SEND_DELAY_MAX_MS (${DELAY_MAX_MS})`);
@@ -109,8 +103,6 @@ async function main() {
 
   console.log(`\n📬 send-daily-emails`);
   console.log(`   bunchID   : ${bunchID}`);
-  console.log(`   chunk     : ${CHUNK_INDEX} (size=${CHUNK_SIZE})`);
-  console.log(`   daily cap : ${MAX_DAILY_SENDS}`);
   console.log(`   delay     : ${DELAY_MIN_MS/1000}–${DELAY_MAX_MS/1000}s`);
   console.log(`   dry-run   : ${isDry}`);
   console.log(`   from      : ${EMAIL_USER}\n`);
@@ -126,6 +118,7 @@ async function main() {
     const alreadySentCol = db.collection("AlreadySent");
 
     await alreadySentCol.createIndex({ email: 1 }, { unique: true }).catch(() => {});
+    await ensureConnectorDefaults(db);
 
     // Only send to evaluated docs that scored >= 0.7; sort by score desc so best
     // matches go first. Docs without evaluation (e.g. legacy or pre-evaluator runs)
@@ -170,39 +163,21 @@ async function main() {
       ).catch(() => {});
     }
 
-    // Self-email is only injected into chunk 0 to avoid triple-send across 3 daily runs.
-    // Use a date-based check (was-sent-today) because the AlreadySent unique index is on
-    // { email } only — bunch_id-scoped queries miss entries written with a different bunch_id,
-    // and insertOne for the self-email silently fails with 11000 if any prior entry exists.
-    const allEligibleDocs = validDocs.filter(u => !sentSet.has(u.email) && !unsubSet.has(u.email));
-    if (EMAIL_USER && CHUNK_INDEX === 0 && !allEligibleDocs.find(u => u.email === EMAIL_USER)) {
+    const toSend = validDocs.filter(u => !sentSet.has(u.email) && !unsubSet.has(u.email));
+
+    // Inject self-email at top if not already sent today
+    if (EMAIL_USER && !toSend.find(u => u.email === EMAIL_USER)) {
       const selfTodayStart = new Date(); selfTodayStart.setUTCHours(0, 0, 0, 0);
       const selfAlreadySent = await alreadySentCol.findOne({ email: EMAIL_USER, sentAt: { $gte: selfTodayStart } });
       if (!selfAlreadySent) {
-        allEligibleDocs.unshift({ email: EMAIL_USER, evaluation: { personalization_hook: "" } });
+        toSend.unshift({ email: EMAIL_USER, evaluation: { score: 1, email_subject: "", email_preview_text: "", email_body: "" } });
       }
     }
 
-    // Enforce daily cap: count sends recorded today (UTC day) across all bunches
-    const todayStart = new Date(); todayStart.setUTCHours(0, 0, 0, 0);
-    const todaySentCount = await alreadySentCol.countDocuments({ sentAt: { $gte: todayStart } });
-    const remainingCap = Math.max(0, MAX_DAILY_SENDS - todaySentCount);
-    if (remainingCap === 0) {
-      console.log(`🚫 Daily cap reached (${todaySentCount}/${MAX_DAILY_SENDS}). Exiting.`);
-      return;
-    }
-
-    // Slice this chunk, then clamp to remaining daily cap
-    const chunkStart = CHUNK_INDEX * CHUNK_SIZE;
-    const chunkRaw   = allEligibleDocs.slice(chunkStart, chunkStart + CHUNK_SIZE);
-    const toSend     = chunkRaw.slice(0, remainingCap);
-
-    const chunkEnd = chunkRaw.length ? chunkStart + chunkRaw.length - 1 : chunkStart;
-    console.log(`📦 Chunk ${CHUNK_INDEX}: contacts[${chunkStart}..${chunkEnd}] = ${chunkRaw.length} eligible`);
-    console.log(`✉️  To send: ${toSend.length}  (${sentSet.size} already sent, ${unsubSet.size} unsubscribed, ${allEligibleDocs.length - chunkRaw.length} outside chunk, ${chunkRaw.length - toSend.length} over daily cap)\n`);
+    console.log(`✉️  To send: ${toSend.length}  (${sentSet.size} already sent, ${unsubSet.size} unsubscribed)\n`);
 
     if (!toSend.length) {
-      console.log("✅ Nothing left to send for this chunk.");
+      console.log("✅ Nothing to send today.");
       return;
     }
 
@@ -216,29 +191,35 @@ async function main() {
       const doc = toSend[i];
       const email = doc.email;
 
-      // Substitute {{PersonalizationHook}} with the LLM-generated opener.
-      // When a hook is present, wrap it in a paragraph so it renders correctly in HTML.
-      // When absent the placeholder collapses to nothing (empty string).
-      const hookRaw = doc.evaluation?.personalization_hook || "";
-      const hookHtml = hookRaw
-        ? `<p style="margin:0 0 22px 0;">${hookRaw}</p>`
-        : "";
-      const personalizedTemplate = template.replace(/\{\{PersonalizationHook\}\}/g, hookHtml);
+      const previewText = doc.evaluation?.email_preview_text || "";
+      const bodyRaw = doc.evaluation?.email_body || "";
+
+      // Split LLM-generated plain-text body into paragraphs and wrap each in <p>
+      const bodyHtml = bodyRaw.trim()
+        ? bodyRaw
+            .split(/\n\n+/)
+            .map(p => `<p style="margin:0 0 18px 0;">${p.trim()}</p>`)
+            .join("")
+        : `<p style="margin:0 0 18px 0;">Hi, I found your email on LinkedIn and wanted to reach out about potential opportunities.</p>`;
+
+      const personalizedTemplate = template
+        .replace(/\{\{PreviewText\}\}/g, previewText)
+        .replace(/\{\{EmailBody\}\}/g, bodyHtml);
       const html = addTracking(personalizedTemplate, email, bunchID);
 
-      // Build a personalized subject line using matched_keywords from the evaluation.
-      // Picks up to 2 keywords most relevant to the candidate's stack; falls back to a
-      // generic subject if the evaluator returned none.
-      const FALLBACK_SUBJECT = "Application for software engineering role";
-      const keywords = (doc.evaluation?.matched_keywords || [])
-        .filter(k => typeof k === "string" && k.trim().length > 0)
-        .slice(0, 2);
-      const SUBJECT = keywords.length > 0
-        ? `Application — ${keywords.join(" / ")} engineer`
-        : FALLBACK_SUBJECT;
+      // Personalized subject from evaluator; fallback to generic if missing
+      const FALLBACK_SUBJECT = "quick note — software engineering role";
+      const SUBJECT = (doc.evaluation?.email_subject || "").trim() || FALLBACK_SUBJECT;
+
+      // Personalize plain text version per-recipient
+      const personalizedText = plainText
+        ? plainText.replace(/\{\{EmailBody\}\}/g, bodyRaw.trim() || "Hi, I found your email on LinkedIn and wanted to reach out about potential opportunities.")
+        : null;
 
       if (isDry) {
-        console.log(`  [DRY] would send → ${email} (score=${(doc.evaluation?.score ?? "n/a")}, subject="${SUBJECT}", hook="${hookRaw.slice(0, 60)}")`);
+        console.log(`  [DRY] would send → ${email} (score=${(doc.evaluation?.score ?? "n/a")}, subject="${SUBJECT}")`);
+        console.log(`         preview: "${previewText.slice(0, 80)}"`);
+        console.log(`         body   : "${bodyRaw.slice(0, 80)}..."`);
         success++;
         continue; // no delay in dry-run — preview is instant
       }
@@ -256,7 +237,7 @@ async function main() {
 
       try {
         const response = await sendViaConnectors(
-          { to: email, subject: SUBJECT, html, text: plainText, replyTo: EMAIL_REPLY_TO },
+          { to: email, subject: SUBJECT, html, text: personalizedText, replyTo: EMAIL_REPLY_TO },
           db
         );
 
@@ -294,7 +275,7 @@ async function main() {
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    console.log(`\n📊 Chunk ${CHUNK_INDEX} done — sent: ${success}, failed: ${failed}, elapsed: ${elapsed}s`);
+    console.log(`\n📊 Done — sent: ${success}, failed: ${failed}, elapsed: ${elapsed}s`);
     if (failed > 0) process.exit(1);
   } finally {
     await mongo.close();

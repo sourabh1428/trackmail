@@ -47,13 +47,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Restore default connector configs so the live pipeline isn't broken after tests
+  // Restore default connector configs so the live pipeline isn't broken after tests.
+  // Limits match the DEFAULT_DAILY_LIMIT in connectors.js (20/connector).
+  // ensureConnectorDefaults() would reconcile these anyway on next pipeline run.
   const defaults = [
-    { name: "ses",    dailyLimit: 200, enabled: true, order: 1 },
-    { name: "gmail",  dailyLimit: 100, enabled: true, order: 2 },
-    { name: "gmail2", dailyLimit: 100, enabled: true, order: 3 },
-    { name: "gmail3", dailyLimit: 100, enabled: true, order: 4 },
-    { name: "resend", dailyLimit: 100, enabled: true, order: 5 },
+    { name: "ses",    dailyLimit: 20, enabled: true, order: 1 },
+    { name: "gmail",  dailyLimit: 20, enabled: true, order: 2 },
+    { name: "gmail2", dailyLimit: 20, enabled: true, order: 3 },
+    { name: "gmail3", dailyLimit: 20, enabled: true, order: 4 },
+    { name: "resend", dailyLimit: 20, enabled: true, order: 5 },
   ];
   await db.collection("ConnectorConfigs").deleteMany({});
   await db.collection("ConnectorConfigs").insertMany(defaults);

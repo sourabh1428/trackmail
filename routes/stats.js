@@ -43,11 +43,10 @@ function stageFor(row) {
 async function getRecipientSnapshots({ bunchId } = {}) {
   const db = getDB();
   const sentFilter = bunchId ? { bunch_id: bunchId } : {};
-  const eventFilter = bunchId ? { bunch_id: bunchId } : {};
 
   const [sentDocs, events, replies] = await Promise.all([
     db.collection("AlreadySent").find(sentFilter).toArray(),
-    db.collection("TrackingEvents").find(eventFilter).sort({ timestamp: -1 }).toArray(),
+    fetchTrackingEvents(db, bunchId),
     db.collection("Replies").find({}).sort({ repliedAt: -1 }).toArray().catch(() => []),
   ]);
 

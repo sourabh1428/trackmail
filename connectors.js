@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 
 const { SESClient, SendEmailCommand } = require("@aws-sdk/client-ses");
 const nodemailer = require("nodemailer");
@@ -42,11 +42,7 @@ async function sendViaGmail({ to, subject, html, text, replyTo }) {
   });
   const result = await transporter.sendMail({
     from: `"Sourabh Pathak" <${process.env.EMAIL_USER2}>`,
-    to,
-    subject,
-    html,
-    text,
-    replyTo,
+    to, subject, html, text, replyTo,
   });
   return { messageId: result.messageId };
 }
@@ -62,11 +58,7 @@ async function sendViaGmail2({ to, subject, html, text, replyTo }) {
   });
   const result = await transporter.sendMail({
     from: `"Sourabh Pathak" <${process.env.EMAIL_USER3}>`,
-    to,
-    subject,
-    html,
-    text,
-    replyTo,
+    to, subject, html, text, replyTo,
   });
   return { messageId: result.messageId };
 }
@@ -82,11 +74,7 @@ async function sendViaGmail3({ to, subject, html, text, replyTo }) {
   });
   const result = await transporter.sendMail({
     from: `"Sourabh Pathak" <${process.env.EMAIL_USER4}>`,
-    to,
-    subject,
-    html,
-    text,
-    replyTo,
+    to, subject, html, text, replyTo,
   });
   return { messageId: result.messageId };
 }
@@ -102,11 +90,7 @@ async function sendViaGmail4({ to, subject, html, text, replyTo }) {
   });
   const result = await transporter.sendMail({
     from: `"Sourabh Pathak" <${process.env.EMAIL_USER5}>`,
-    to,
-    subject,
-    html,
-    text,
-    replyTo,
+    to, subject, html, text, replyTo,
   });
   return { messageId: result.messageId };
 }
@@ -116,10 +100,7 @@ async function sendViaResend({ to, subject, html, text, replyTo }) {
   const resend = new Resend(process.env.resend_api_key);
   const result = await resend.emails.send({
     from: RESEND_FROM,
-    to,
-    subject,
-    html,
-    text,
+    to, subject, html, text,
     reply_to: replyTo,
   });
   if (result.error) throw new Error(result.error.message);
@@ -127,6 +108,23 @@ async function sendViaResend({ to, subject, html, text, replyTo }) {
 }
 
 const SENDERS = { ses: sendViaSES, gmail: sendViaGmail, gmail2: sendViaGmail2, gmail3: sendViaGmail3, gmail4: sendViaGmail4, resend: sendViaResend };
+
+const DEFAULT_CONNECTOR_ORDER = ["ses", "gmail", "gmail2", "gmail3", "gmail4", "resend"];
+const DEFAULT_DAILY_LIMIT = 20;
+
+async function ensureConnectorDefaults(db) {
+  const ops = DEFAULT_CONNECTOR_ORDER.map((name, i) => ({
+    updateOne: {
+      filter: { name },
+      update: {
+        $setOnInsert: { name, enabled: true, order: i + 1 },
+        $min: { dailyLimit: DEFAULT_DAILY_LIMIT },
+      },
+      upsert: true,
+    },
+  }));
+  await db.collection("ConnectorConfigs").bulkWrite(ops);
+}
 
 async function sendViaConnectors({ to, subject, html, text, replyTo }, db) {
   const istDate = getISTDate();
@@ -139,26 +137,25 @@ async function sendViaConnectors({ to, subject, html, text, replyTo }, db) {
   const usageMap = {};
   for (const doc of usageDocs) usageMap[doc.name] = doc.sent;
 
+  const available = configs
+    .filter(c => c.enabled && SENDERS[c.name] && (usageMap[c.name] || 0) < c.dailyLimit)
+    .sort((a, b) => (usageMap[a.name] || 0) - (usageMap[b.name] || 0));
+
+  if (!available.length) {
+    throw new Error("All connectors exhausted for today");
+  }
+
   let lastError;
-  for (const config of configs) {
-    if (!config.enabled) continue;
-    const sent = usageMap[config.name] || 0;
-    if (sent >= config.dailyLimit) continue;
-
-    const sender = SENDERS[config.name];
-    if (!sender) continue;
-
+  for (const config of available) {
     let result;
     try {
-      result = await sender({ to, subject, html, text, replyTo });
+      result = await SENDERS[config.name]({ to, subject, html, text, replyTo });
     } catch (e) {
       console.error(`[connectors] ${config.name} failed: ${e.message}`);
       lastError = e;
       continue;
     }
 
-    // Send succeeded. Usage tracking in its own try so a DB blip here never
-    // causes fallthrough to the next connector (which would send a duplicate).
     try {
       await db.collection("ConnectorUsage").updateOne(
         { name: config.name, istDate },
@@ -174,4 +171,4 @@ async function sendViaConnectors({ to, subject, html, text, replyTo }, db) {
   throw lastError || new Error("All connectors exhausted for today");
 }
 
-module.exports = { sendViaConnectors, getISTDate, VALID_CONNECTORS };
+module.exports = { sendViaConnectors, ensureConnectorDefaults, getISTDate, VALID_CONNECTORS };

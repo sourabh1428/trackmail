@@ -67,7 +67,9 @@ const links = [
   { to: "/recipients", label: "Recipients", icon: <UsersIcon /> },
   { to: "/companies", label: "Companies", icon: <UsersIcon /> },
   { to: "/templates", label: "Templates", icon: <FileIcon /> },
-  { to: "/analytics", label: "Analytics", icon: <GridIcon /> },
+  { to: "/insights", label: "Insights", icon: <GridIcon /> },
+  { to: "/scraper", label: "Scraper", icon: <PlayIcon /> },
+  { to: "/connectors", label: "Connectors", icon: <PlugIcon /> },
 ];
 
 export default function Navbar() {

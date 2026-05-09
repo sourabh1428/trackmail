@@ -62,8 +62,12 @@ class LinkedInScraper:
 					Object.defineProperty(navigator, 'languages', { get: () => ['en-US','en'] });
 				""")
 				print(f"🌐 Tab {i+1}: Navigating to {link}")
-				page.goto(link, timeout=60000, wait_until="domcontentloaded")
-				pages.append((page, link, i+1))
+				try:
+					page.goto(link, timeout=120000, wait_until="domcontentloaded")
+					pages.append((page, link, i+1))
+				except Exception as e:
+					print(f"⚠️ Tab {i+1}: Failed to load ({e}), skipping this URL")
+					page.close()
 			print(f"✅ All {len(links)} tabs opened successfully!")
 			print("🔍 Starting round-robin scrolling across all tabs...")
 
@@ -312,7 +316,7 @@ class LinkedInScraper:
 				print(f"Error loading saved context: {e}")
 				context_exists = False
 		
-		if not context_exists or not context_is_recent:
+		if not context_exists:
 			print("No valid saved context found. Logging in...")
 			self.human_delay(2, 4)
 			context = self.browser.new_context(

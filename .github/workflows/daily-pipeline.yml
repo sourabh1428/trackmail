@@ -1,11 +1,9 @@
-name: Daily Pipeline — Scrape + Chunked Send
+name: Daily Pipeline — Scrape + Send
 
 on:
   schedule:
-    - cron: "0 3 * * 1-5"   # scrape only      — 03:00 UTC = 08:30 IST, Mon–Fri
-    - cron: "3 4 * * 1-5"   # send chunk 0     — 04:03 UTC ≈ 09:33 IST
-    - cron: "7 8 * * 1-5"   # send chunk 1     — 08:07 UTC ≈ 13:37 IST
-    - cron: "2 11 * * 1-5"  # send chunk 2     — 11:02 UTC ≈ 16:32 IST
+    - cron: "0 3 * * 1-5"   # scrape + evaluate — 03:00 UTC = 08:30 IST, Mon–Fri
+    - cron: "0 4 * * 1-5"   # send all           — 04:00 UTC = 09:30 IST, Mon–Fri
 
   workflow_dispatch:
     inputs:
@@ -16,13 +14,9 @@ on:
       bunch_id:
         description: "Override bunchID (DDMMYY, blank = today)"
         required: false
-      chunk_index:
-        description: "Chunk to send (0, 1, or 2)"
-        required: false
-        default: "0"
 
 jobs:
-  # ── Scrape: runs on its cron AND on manual dispatch (so workflow_dispatch gets fresh data) ──
+  # ── Scrape: runs on scrape cron AND manual dispatch ──
   scrape:
     name: Scrape LinkedIn emails
     if: github.event.schedule == '0 3 * * 1-5' || github.event_name == 'workflow_dispatch'
@@ -94,7 +88,6 @@ jobs:
           if-no-files-found: ignore
 
   # ── Evaluate: runs after scrape (on scrape-cron or manual dispatch) ──
-  # Calls Groq (free tier) to score each scraped doc and set status="evaluated".
   evaluate:
     name: Evaluate eligibility (LLM)
     needs: scrape
@@ -121,23 +114,19 @@ jobs:
         env:
           MONGODB_URI:     ${{ secrets.MONGODB_URI }}
           GROQ_API_KEY:    ${{ secrets.GROQ_API_KEY }}
+          GEMINI_API_KEY:  ${{ secrets.GEMINI_API_KEY }}
           BUNCH_ID:        ${{ inputs.bunch_id || '' }}
         run: node evaluate-eligibility.js
 
-  # ── Send: runs at the three send-window crons OR after evaluate on manual dispatch ──
-  # needs: evaluate so that workflow_dispatch waits for evaluate to finish first.
-  # On send-window crons both scrape and evaluate are skipped, so we allow 'skipped'.
+  # ── Send: runs at the send cron OR after evaluate on manual dispatch ──
   send:
-    name: Send email chunk
+    name: Send emails
     needs: evaluate
     if: >
       (needs.evaluate.result == 'success' || needs.evaluate.result == 'skipped') &&
-      (github.event.schedule == '3 4 * * 1-5'  ||
-       github.event.schedule == '7 8 * * 1-5'  ||
-       github.event.schedule == '2 11 * * 1-5' ||
-       github.event_name == 'workflow_dispatch')
+      (github.event.schedule == '0 4 * * 1-5' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
 
     steps:
       - name: Checkout
@@ -152,17 +141,7 @@ jobs:
       - name: Install dependencies
         run: npm ci --omit=dev
 
-      - name: Resolve chunk index from trigger
-        id: chunk
-        run: |
-          case "${{ github.event.schedule }}" in
-            "3 4 * * 1-5")  echo "index=0" >> $GITHUB_OUTPUT ;;
-            "7 8 * * 1-5")  echo "index=1" >> $GITHUB_OUTPUT ;;
-            "2 11 * * 1-5") echo "index=2" >> $GITHUB_OUTPUT ;;
-            *)               echo "index=${{ inputs.chunk_index || '0' }}" >> $GITHUB_OUTPUT ;;
-          esac
-
-      - name: Send email chunk
+      - name: Send emails
         env:
           MONGODB_URI:            ${{ secrets.MONGODB_URI }}
           EMAIL_USER:             ${{ secrets.EMAIL_USER }}
@@ -170,22 +149,21 @@ jobs:
           AWS_ACCESS_KEY_ID:      ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY:  ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           AWS_REGION:             ${{ secrets.AWS_REGION }}
-          # Gmail connector (order 2)
+          # Gmail connector
           EMAIL_USER2:            ${{ secrets.EMAIL_USER2 }}
           EMAIL_PASS2:            ${{ secrets.EMAIL_PASS2 }}
-          # Gmail2 connector (order 3 — optional third Gmail account)
+          # Gmail2 connector
           EMAIL_USER3:            ${{ secrets.EMAIL_USER3 }}
           EMAIL_PASS3:            ${{ secrets.EMAIL_PASS3 }}
-          # Gmail3 connector (order 4 — optional fourth Gmail account)
+          # Gmail3 connector
           EMAIL_USER4:            ${{ secrets.EMAIL_USER4 }}
           EMAIL_PASS4:            ${{ secrets.EMAIL_PASS4 }}
+          # Gmail4 connector (EMAIL_USER / EMAIL_PASS — same account as SES From:)
+          EMAIL_PASS:             ${{ secrets.EMAIL_PASS }}
           # Resend connector
           resend_api_key:         ${{ secrets.RESEND_API_KEY }}
           BUNCH_ID:               ${{ inputs.bunch_id || '' }}
           DRY_RUN:                ${{ inputs.dry_run || 'false' }}
-          CHUNK_INDEX:            ${{ steps.chunk.outputs.index }}
-          CHUNK_SIZE:             "30"
-          MAX_DAILY_SENDS:        "90"
           SEND_DELAY_MIN_MS:      "45000"
           SEND_DELAY_MAX_MS:      "90000"
         run: node send-daily-emails.js
